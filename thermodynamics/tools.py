@@ -1,6 +1,7 @@
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import logging
 
 from xtb.ase.calculator import XTB
 from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
@@ -12,25 +13,36 @@ from ase.vibrations import Vibrations
 from ase.units import Hartree, Bohr
 from osc_discovery.photocatalysis.thermodynamics.constants import dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR
 
+def get_logger():
+    logger_ = logging.getLogger()
+    logger_.setLevel(logging.INFO)
+    if not logger_.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s: %(message)s'))
+        logger_.addHandler(console_handler)
+    return logger_
 
 def single_point(molecule, method="GFN2-xTB", accuracy=0.2, electronic_temperature=298.15, relaxation=False,
                  trajectory=None, fmax=0.05):
-    # Attach Caclulator to ASE molecule if none present
-    # Note: Calculator params, such as 'method', can only be updated if prior calculators are deleted
-    # i.e. del molecule.calc
-    if molecule.calc is None:
-        calculator = XTB(method=method, accuracy=accuracy, electronic_temperature=electronic_temperature)
-        molecule.calc = calculator
-
+    # Attach Caclulator to ASE molecule
+    molecule.calc = XTB(method=method, accuracy=accuracy, electronic_temperature=electronic_temperature)
     # Locally optimize geometry
     if relaxation:
+        molecule.info['opt_file'] = trajectory
         optimizer = LBFGS(molecule, trajectory=trajectory, logfile=None)
+        # logger = get_logger()
+        # logger.info('Optimizing Geometry')
         optimizer.run(fmax=fmax)
 
-    # Calculate Energy (eV)
-    E = molecule.get_potential_energy()
+    # Calculate Energy and delete calc so you can pickle molecule w/o errors
+    molecule.info['energy'] = molecule.get_potential_energy()
+    del molecule.calc
 
-    return E
+    return molecule
+
+def single_point_worker(jobs):
+    molecule, calc_param_kwargs, opt_param_kwargs = jobs
+    return single_point(molecule, **calc_param_kwargs, **opt_param_kwargs)
 
 def HOMO_LUMO_energy(molecule, method='GFN2-xTB', accuracy=0.2, electronic_temperature=298.15):
     """
