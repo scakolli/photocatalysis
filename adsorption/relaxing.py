@@ -18,9 +18,8 @@ def relax_configurations(configurations, calc_params, opt_params, multi_process=
             zip(configurations, repeat(calc_params), repeat(opt_params))]
 
     if opt_params['trajectory'] is not None:
-
         for i, (_, _, o_params) in enumerate(jobs):
-            o_params['trajectory'] = '{}{}'.format(opt_params['trajectory'], i)
+            o_params['trajectory'] = '{}{}.traj'.format(opt_params['trajectory'], i)
 
     start = time.perf_counter()
     relax_logger.info(f'Relaxing {len(configurations)} Configs')

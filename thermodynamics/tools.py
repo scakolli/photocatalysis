@@ -2,12 +2,14 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import logging
+import subprocess
 
 from xtb.ase.calculator import XTB
 from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
 from xtb.interface import Calculator, Param
 from xtb.utils import get_method as get_xtb_method
 
+import ase
 from ase.optimize import LBFGS
 from ase.vibrations import Vibrations
 from ase.units import Hartree, Bohr
@@ -72,33 +74,93 @@ def HOMO_LUMO_energy(molecule, method='GFN2-xTB', accuracy=0.2, electronic_tempe
 
     return energies[homo_indx] * Hartree, energies[lumo_indx] * Hartree
 
-def zero_point_energy(molecule):
-    ### Calculate vibrational modes by finite-diff. approximation of the Hessian and return the zero point energy (ZPE)
-    displacement = 0.005 * Bohr  # Value used in 'xtb mol.xyz --hess'
-    vib = Vibrations(molecule, delta=displacement)
-    vib.run(), vib.combine()
-    vib_energy = vib.get_energies()
-    vib.clean(), os.rmdir('vib')
+def ipea(molecule, calc_params, n_cores=4):
+    ## Try std_output: except error
+    ## Introduce solvent
 
-    if len(molecule) == 2:
-        # Hydrogen molecule exception (3N-5 for linear molecule)
-        num_modes = 1
+    molecule.write('scratch.xyz')
+
+    cmd = 'xtb scratch.xyz --vipea --acc {} --etemp {} --parallel {} --ceasefiles'.format(
+        calc_params['accuracy'],
+        calc_params['electronic_temperature'],
+        n_cores)
+
+    out = subprocess.run(cmd.split(), capture_output=True)
+
+    if out.returncode == 0:
+        string_out = out.stdout.decode('UTF-8')
+        ip, ea, homo, lumo = parse_ipea(string_out)
+        molecule.info['ip'] = ip
+        molecule.info['ea'] = ea
+        molecule.info['homo'] = homo
+        molecule.info['lumo'] = lumo
+
+        return ip, ea, homo, lumo
     else:
-        num_modes = 3 * len(molecule) - 6  # 3N-6 for nonlinear
+        print("Error, Check Return Code")
+        return out
 
-    zpe = vib_energy[-num_modes:].sum().real / 2.
-    return zpe
+def parse_ipea(string):
+    # Parse IP/EA aswell as HOMO/LUMO for comparison
+    homo_parsed, lumo_parsed = False, False
+    for line in string.splitlines():
+        if 'delta SCC IP (eV)' in line:
+            # ionization potential in eV
+            ip = float(line.split()[4])
+        if 'delta SCC EA (eV)' in line:
+            # electron affinity in eV
+            ea = float(line.split()[4])
+        if '(HOMO)' in line and not homo_parsed:
+            # KS Homo in eV
+            homo = float(line.split()[3])
+            homo_parsed = True
+        if '(LUMO)' in line and not lumo_parsed:
+            # KS Lumo in eV
+            lumo = float(line.split()[2])
+            lumo_parsed = True
+
+    return ip, ea, homo, lumo
+
+def zero_point_energy(molecule, calculator_params, n_cores=4):
+    ## Try std_output: except error
+    ## Introduce solvent
+
+    molecule.write('scratch.xyz')
+
+    cmd = 'xtb --gfn {} scratch.xyz --hess --acc {} --etemp {} --parallel {} --ceasefiles --silent --strict'.format(
+        calculator_params['method'][3],
+        calculator_params['accuracy'],
+        calculator_params['electronic_temperature'],
+        n_cores)
+
+    out = subprocess.run(cmd.split(), capture_output=True)
+
+    if out.returncode == 0:
+        ## Hessian calculation ran successfully, exit
+        string_out = out.stdout.decode('UTF-8')
+        zpe = parse_zpe(string_out)
+        molecule.info['zpe'] = zpe
+
+        return zpe
+    else:
+        return out
+        print("Error: Incompletely Optimized Geometry")
+
+def parse_zpe(string):
+    for line in string.splitlines():
+        if 'zero point energy' in line:
+            zpe_ = float(line.split()[4]) * Hartree # in eV
+            return zpe_
 
 def calculate_free_energies(s, OH, O, OOH):
     ### Calculate reaction free energies of *, *OH, *O, *OOH species
-    if 'zpe' not in OOH.info:
-        s.info['zpe'] = zero_point_energy(s)
-        OH.info['zpe'] = zero_point_energy(OH)
-        O.info['zpe'] = zero_point_energy(O)
-        OOH.info['zpe'] = zero_point_energy(OOH)
+    if 'zpe' not in s.info:
+        ZPEs = zero_point_energy(s, s.info['calc_params'])
+        ZPEOH = zero_point_energy(OH, s.info['calc_params'])
+        ZPEO = zero_point_energy(O, s.info['calc_params'])
+        ZPEOOH = zero_point_energy(OOH, s.info['calc_params'])
 
     Es, EOH, EO, EOOH = s.info['energy'], OH.info['energy'], O.info['energy'], OOH.info['energy']
-    ZPEs, ZPEOH, ZPEO, ZPEOOH = s.info['zpe'], OH.info['zpe'], O.info['zpe'], OOH.info['zpe']
 
     dG1 = (EOH + ZPEOH) - (Es + ZPEs) + dG1_CORR
     dG2 = (EO + ZPEO) - (EOH + ZPEOH) + dG2_CORR

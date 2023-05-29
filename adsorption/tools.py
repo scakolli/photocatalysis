@@ -1,4 +1,5 @@
 from itertools import tee
+from copy import deepcopy
 from rdkit import Chem
 import openbabel.pybel as pb
 
@@ -35,18 +36,18 @@ def get_neighboring_bonds_list(substrate):
     # Convert to rdkit molecule and then get bonds
     return [sorted([nbr.GetIdx() for nbr in atom.GetNeighbors()]) for atom in ase2rdkit_valencies(substrate).GetAtoms()]
 
-def prepare_substrate(smile_string):
+def prepare_substrate(smile_string, calculator_params):
     # Get molecular conformers of the substrate
     substrate_confs = get_conformers(smile_string)
     substrate = substrate_confs.pop()
 
     # Relax
-    Es = single_point(substrate, relaxation=True, trajectory='opt.traj', fmax=0.005)
+    substrate = single_point(substrate, **calculator_params, relaxation=True, fmax=0.005)
 
     # Attach useful information to the substrate object
     total_num_nonHs = len(substrate) - substrate.get_chemical_symbols().count('H')  # number of non-hydrogen atoms
-    substrate.info['energy'] = Es
+    substrate.info['calc_params'] = deepcopy(calculator_params)
     substrate.info['bonds'] = get_neighboring_bonds_list(substrate)
     substrate.info['nonH_count'] = int(total_num_nonHs)
 
-    return substrate
+    return substrate, substrate_confs
