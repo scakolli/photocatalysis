@@ -53,7 +53,7 @@ def find_optimal_adsorbate_configurations(substrate, h=1.4, fmax_low=0.005, fmax
         configsO = build_configuration_from_site(O, substrate, active_site, constrO, f=h)
 
         if output_folder is not None: optimization_params['trajectory'] = 'optO'
-        configsO_relaxed = relax_configurations(configsO, substrate.info['calc_params'], optimization_params, multi_process=2)
+        configsO_relaxed = relax_configurations(configsO, substrate.info['calc_params'], optimization_params, multi_process=1)
 
         # Filter for legitimate configurations and active site matches
         configsO_filtered = filter_configurations(configsO_relaxed, substrate)
@@ -74,7 +74,7 @@ def find_optimal_adsorbate_configurations(substrate, h=1.4, fmax_low=0.005, fmax
         configsOOH = build_configuration_from_site(OOH, substrate, active_site, constrOOH, f=h)
 
         if output_folder is not None: optimization_params['trajectory'] = 'optOOH'
-        configsOOH_relaxed = relax_configurations(configsOOH, substrate.info['calc_params'], optimization_params, multi_process=2)
+        configsOOH_relaxed = relax_configurations(configsOOH, substrate.info['calc_params'], optimization_params, multi_process=1)
 
         configsOOH_filtered = filter_configurations(configsOOH_relaxed, substrate)
         configsOOH_filtered_matched = [config for config in configsOOH_filtered if

@@ -37,11 +37,35 @@ def get_neighboring_bonds_list(substrate):
     return [sorted([nbr.GetIdx() for nbr in atom.GetNeighbors()]) for atom in ase2rdkit_valencies(substrate).GetAtoms()]
 
 def prepare_substrate(smile_string, calculator_params):
-    # Get molecular conformers of the substrate
-    substrate_confs = get_conformers(smile_string)
-    substrate = substrate_confs.pop()
+    """Prepare the substrate for further use
+    get_conformers() generates a list of confs using ETKDG implemented in RDKIT. Depending on the number of
+    rotatable bonds, this procedure can create as many as 300 conformations (all satisfying the RMSD pruning criteria
+    set in the code). These confs are subsequently optmizied using RDKITs UFF or MFF94, and ranked by energy, and again
+    pruned. Lowest energy conformation first in the list.
 
-    # Relax
+    Computational High-throughput screen of polymeric photocatalysts
+    10.1039/c8fd00171e
+
+    "From a computational high-throughput screening perspective, the observed
+    low sensitivity to the sampling of conformational degrees of freedom implies that
+    the effect of not finding the true lowest energy conformer on the predicted
+    thermodynamic driving force for proton reduction and water oxidation, as well as
+    on the on-set of light absorption, is only very minor. Hence a minimal conformer
+    search will generally suffice when screening for polymeric photocatalysts. The
+    same weak dependence of IP, EA and optical gap values probably also means that
+    in contrast to chain length and order/disorder in the case of random co-polymers
+    (see below) conformational degrees of freedom do not result in large batch-to-batch variations.
+
+    Maximum variation of a given property with respect to conformation is generally of the order of ~0.1 eV"
+
+    For now, just take lowest energy conformation of the screening procedure, and subsequently optimize with xTB.
+
+    """
+    # Generate sorted low-energy conformations using ETKDG and MMFF94
+    substrate_confs = get_conformers(smile_string)
+    substrate = substrate_confs.pop(0) # Lowest energy conf
+
+    # Relax at the tight-binding level with xTB
     substrate = single_point(substrate, **calculator_params, relaxation=True, fmax=0.005)
 
     # Attach useful information to the substrate object

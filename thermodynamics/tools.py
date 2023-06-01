@@ -24,59 +24,31 @@ def get_logger():
         logger_.addHandler(console_handler)
     return logger_
 
-def single_point(molecule, method="GFN2-xTB", accuracy=0.2, electronic_temperature=298.15, relaxation=False,
-                 trajectory=None, fmax=0.05):
+def single_point(molecule, method="GFN2-xTB", accuracy=0.2, electronic_temperature=298.15, solvent=None,
+                 relaxation=False, trajectory=None, fmax=0.05):
     # Attach Caclulator to ASE molecule
-    molecule.calc = XTB(method=method, accuracy=accuracy, electronic_temperature=electronic_temperature)
+    mol = molecule.copy()
+    mol.calc = XTB(method=method, accuracy=accuracy, electronic_temperature=electronic_temperature, solvent=str(solvent))
+
     # Locally optimize geometry
     if relaxation:
-        molecule.info['opt_file'] = trajectory
-        optimizer = LBFGS(molecule, trajectory=trajectory, logfile=None)
-        # logger = get_logger()
-        # logger.info('Optimizing Geometry')
+        mol.info['opt_file'] = trajectory
+        logger = get_logger()
+        logger.info('Optimizing Geometry')
+        optimizer = LBFGS(mol, trajectory=trajectory, logfile=None)
         optimizer.run(fmax=fmax)
 
     # Calculate Energy and delete calc so you can pickle molecule w/o errors
-    molecule.info['energy'] = molecule.get_potential_energy()
-    del molecule.calc
+    mol.info['energy'] = mol.get_potential_energy()
+    del mol.calc
 
-    return molecule
+    return mol
 
 def single_point_worker(jobs):
     molecule, calc_param_kwargs, opt_param_kwargs = jobs
     return single_point(molecule, **calc_param_kwargs, **opt_param_kwargs)
 
-def HOMO_LUMO_energy(molecule, method='GFN2-xTB', accuracy=0.2, electronic_temperature=298.15):
-    """
-    Returns HOMO and LUMO energies (eV) of an ASE molecule. Molecule must have an ASE calculator instance already attached.
-    Note: Conversion from ASE's use of Angstrom/eV, to xTB's use of Bohr/Hartree
-    """
-    num, pos = molecule.numbers, molecule.positions / Bohr
-
-    if molecule.calc is None:
-        calculator = Calculator(get_xtb_method(method), num, pos)
-        calculator.set_accuracy(accuracy)
-        calculator.set_electronic_temperature(electronic_temperature)
-    else:
-        params = molecule.calc.parameters
-        calculator = Calculator(get_xtb_method(params['method']), num, pos)
-        calculator.set_accuracy(params['accuracy'])
-        calculator.set_electronic_temperature(params['electronic_temperature'])
-
-    calculator.set_verbosity(VERBOSITY_MUTED)
-
-    results = calculator.singlepoint()
-    occup = results.get_orbital_occupations().astype(int)
-    energies = results.get_orbital_eigenvalues()
-
-    homo_indx = np.nonzero(occup)[0][-1]  # Last non-zero orbital occupancy
-    lumo_indx = homo_indx + 1
-
-    return energies[homo_indx] * Hartree, energies[lumo_indx] * Hartree
-
 def ipea(molecule, calc_params, n_cores=4):
-    ## Try std_output: except error
-    ## Introduce solvent
 
     molecule.write('scratch.xyz')
 
@@ -159,6 +131,11 @@ def calculate_free_energies(s, OH, O, OOH):
         ZPEOH = zero_point_energy(OH, s.info['calc_params'])
         ZPEO = zero_point_energy(O, s.info['calc_params'])
         ZPEOOH = zero_point_energy(OOH, s.info['calc_params'])
+    else:
+        ZPEs = s.info['zpe']
+        ZPEOH = OH.info['zpe']
+        ZPEO = O.info['zpe']
+        ZPEOOH = OOH.info['zpe']
 
     Es, EOH, EO, EOOH = s.info['energy'], OH.info['energy'], O.info['energy'], OOH.info['energy']
 

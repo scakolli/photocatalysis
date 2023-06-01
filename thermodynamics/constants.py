@@ -16,6 +16,9 @@ SHE_VACUUM_POTENTIAL = 4.44
 """Static Free energy expression corrections (in eV)"""
 dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR = 124.6464158599693, -13.44012642161362, 124.6464158599693, -230.93270529832492
 
+"""Empirical shift of xTB-IPEA (eV). Still not sure what this is exaxtly..."""
+IPEA_EMPIRICAL_SHIFT = 4.8455
+
 """DFT derived E and ZPE 
 GFN2-xTB, fmax=0.005 eV/Angstrom, accuracy=0.2"""
 # Energy
