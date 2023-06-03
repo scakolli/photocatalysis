@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import logging
 import subprocess
-import deepcopy
+from copy import deepcopy
+import shutil
 
 from xtb.ase.calculator import XTB
 from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
@@ -25,68 +26,99 @@ def get_logger():
         logger_.addHandler(console_handler)
     return logger_
 
-def single_point(molecule, method="GFN2-xTB", accuracy=0.2, electronic_temperature=298.15, solvent=None,
-                 relaxation=False, trajectory=None, fmax=0.05):
-    # Attach Caclulator to ASE molecule
-    mol = molecule.copy()
-    mol.calc = XTB(method=method, accuracy=accuracy, electronic_temperature=electronic_temperature, solvent=str(solvent))
-
-    # Locally optimize geometry
-    if relaxation:
-        mol.info['opt_file'] = trajectory
-        logger = get_logger()
-        logger.info('Optimizing Geometry')
-        optimizer = LBFGS(mol, trajectory=trajectory, logfile=None)
-        optimizer.run(fmax=fmax)
-
-    # Calculate Energy and delete calc so you can pickle molecule w/o errors
-    mol.info['energy'] = mol.get_potential_energy()
-    del mol.calc
-
-    return mol
-
 def single_point_worker(jobs):
     molecule, calc_param_kwargs, opt_param_kwargs = jobs
     return single_point(molecule, **calc_param_kwargs, **opt_param_kwargs)
 
-def ipea(molecule, calc_params, n_cores=4):
+def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
+    """
+    Execute XTB calculations on molecule
+    (see also man page: https://github.com/grimme-lab/xtb/blob/main/man/xtb.1.adoc)
 
-    molecule.write('scratch.xyz')
+    ### Runtypes
+    # sp : single-point scc calc
+    # opt [LEVEL]: geometry optimization, e.g. 'opt vtight'
+    # hess : vibrational and thermodynamic analysis
+    # vipea : vertical ionization potential and electron affinity (This needs the .param_ipea.xtb parameters and a GFN1 Hamiltonian)
+    # vfukui : Fukui indices
 
-    cmd = 'xtb scratch.xyz --vipea --acc {} --etemp {} --parallel {} --ceasefiles'.format(
-        calc_params['accuracy'],
-        calc_params['electronic_temperature'],
-        n_cores)
+    ### Calculator Options
+    # (calculator_kwarg : default_value, description)
+    # gfn : 2, parameterization
+    # chrg : 0, charge
+    # uhf : 0, unpaired electrons
+    # acc : 1.0, accuracy
+    # etemp : 300, electronic temp
 
-    out = subprocess.run(cmd.split(), capture_output=True)
+    # gbsa : None, implicit solvation with gbsa
+    # alpb : None, implicit solvation with alpb
+    # parallel: None, number of cores to devote
+    # ceasefiles: , stop file printout (not all files are halted)
+    """
 
-    if out.returncode == 0:
-        string_out = out.stdout.decode('UTF-8')
-        ip, ea, homo, lumo = parse_ipea(string_out)
-        molecule.info['ip'] = ip
-        molecule.info['ea'] = ea
-        molecule.info['homo'] = homo
-        molecule.info['lumo'] = lumo
+    assert "OMP_NUM_THREADS" in os.environ, "'OMP_NUM_THREADS' env var not set, unparallelized calc, very slow"
+    mol = deepcopy(molecule)
 
-        return ip, ea, homo, lumo
+    # Create folder
+    num_run_folders_cwd = len([folder for folder in os.listdir() if 'run_' in folder])
+    fname = f'run_{num_run_folders_cwd}'
+    os.mkdir(fname)
+    os.chdir(fname)
+
+    # Build command
+    mol.write('scratch.xyz')
+    cmd = f'xtb scratch.xyz --{runtype}'
+    for key, value in calculator_kwargs.items():
+        cmd += f" --{key} {value}"
+
+    # Execute command
+    process_output = subprocess.run((cmd), shell=True, capture_output=True)
+    stdoutput = process_output.stdout.decode('UTF-8')
+    assert process_output.returncode == 0, "Abnormal Termination of xTB calculation"
+
+    # Update molecule geometry, parse output for energies/homo/lumo/etc. and attach info to molecule, clean up folders
+    if 'opt' in runtype:
+        mol = ase.io.read('xtbopt.xyz')
+        del mol.info
+        mol.info = deepcopy(molecule.info)
+
+    out_dict = parse_stdoutput(stdoutput)
+    mol.info.update(out_dict)
+
+    os.chdir('..')
+    if keep_folder:
+        mol.info['fname'] = fname
     else:
-        print("Error, Check Return Code")
-        return out
+        shutil.rmtree(fname)
 
-def parse_energies(byte_code):
-    string = byte_code.decode('UTF-8')
+    return mol
+
+def parse_stdoutput(xtb_output, runtype):
+    # Standard output from xtb call is parsed according to runtype
+    d = {}
+    if runtype == 'sp' or 'opt' in runtype:
+        d['energy'], d['ehomo'], d['elumo'] = parse_energies(xtb_output)
+    elif runtype == 'hess':
+        d['zpe'] = parse_zpe(xtb_output)
+        # Thermo parsing
+    elif runtype == 'vipea':
+        d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea(xtb_output)
+
+    return d
+
+def parse_energies(string):
     for line in string.splitlines():
         if '(HOMO)' in line:
             # KS Homo in eV
-            ehomo = float(line.split()[3])
+            homo = float(line.split()[3])
         if '(LUMO)' in line:
             # KS Lumo in eV
-            elumo = float(line.split()[2])
+            lumo = float(line.split()[2])
         if 'TOTAL' in line:
-            # Total Energy in eH
+            # Total Energy in eV
             e = float(line.split()[-3]) * Hartree
 
-    return e, ehomo, elumo
+    return e, homo, lumo
 
 def parse_ipea(string):
     # Parse IP/EA aswell as HOMO/LUMO for comparison
@@ -109,36 +141,13 @@ def parse_ipea(string):
 
     return ip, ea, homo, lumo
 
-def zero_point_energy(molecule, calculator_params, n_cores=4):
-    ## Try std_output: except error
-    ## Introduce solvent
-
-    molecule.write('scratch.xyz')
-
-    cmd = 'xtb --gfn {} scratch.xyz --hess --acc {} --etemp {} --parallel {} --ceasefiles --silent --strict'.format(
-        calculator_params['method'][3],
-        calculator_params['accuracy'],
-        calculator_params['electronic_temperature'],
-        n_cores)
-
-    out = subprocess.run(cmd.split(), capture_output=True)
-
-    if out.returncode == 0:
-        ## Hessian calculation ran successfully, exit
-        string_out = out.stdout.decode('UTF-8')
-        zpe = parse_zpe(string_out)
-        molecule.info['zpe'] = zpe
-
-        return zpe
-    else:
-        return out
-        print("Error: Incompletely Optimized Geometry")
-
 def parse_zpe(string):
     for line in string.splitlines():
         if 'zero point energy' in line:
             zpe_ = float(line.split()[4]) * Hartree # in eV
             return zpe_
+
+
 
 def calculate_free_energies(s, OH, O, OOH):
     ### Calculate reaction free energies of *, *OH, *O, *OOH species
