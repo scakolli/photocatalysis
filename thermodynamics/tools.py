@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import logging
 import subprocess
+import deepcopy
 
 from xtb.ase.calculator import XTB
 from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
@@ -71,6 +72,21 @@ def ipea(molecule, calc_params, n_cores=4):
     else:
         print("Error, Check Return Code")
         return out
+
+def parse_energies(byte_code):
+    string = byte_code.decode('UTF-8')
+    for line in string.splitlines():
+        if '(HOMO)' in line:
+            # KS Homo in eV
+            ehomo = float(line.split()[3])
+        if '(LUMO)' in line:
+            # KS Lumo in eV
+            elumo = float(line.split()[2])
+        if 'TOTAL' in line:
+            # Total Energy in eH
+            e = float(line.split()[-3]) * Hartree
+
+    return e, ehomo, elumo
 
 def parse_ipea(string):
     # Parse IP/EA aswell as HOMO/LUMO for comparison
