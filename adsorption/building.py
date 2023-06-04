@@ -23,7 +23,7 @@ def find_constrained_optimal_position(site_position, sub_position, distance_cons
 
     return result.x
 
-def build_configuration_from_site(adsorbate, substrate, site, constraint_list, f=1.4):
+def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
     """Build a list of rudimentary adsorbate/substrate configurations on a proposed active site"""
     a, s = adsorbate.copy(), substrate.copy()
 
@@ -50,9 +50,8 @@ def build_configuration_from_site(adsorbate, substrate, site, constraint_list, f
         # Translate adsorbate a height 'f' above position of active site
         a.translate(p + n * f)
 
-        # Form composite system and introduce any constraints
+        # Form composite system
         composite = s + a
-        composite.set_constraint(constraint_list)
         config_list.append(composite)
 
         if s[site].symbol in ['O', 'N', 'S']:
@@ -67,7 +66,6 @@ def build_configuration_from_site(adsorbate, substrate, site, constraint_list, f
             a_opt.translate(optimized_adsorb_position)
 
             composite_opt = s + a_opt
-            composite_opt.set_constraint(constraint_list)
             config_list.append(composite_opt)
 
     return config_list

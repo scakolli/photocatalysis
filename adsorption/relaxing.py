@@ -5,39 +5,27 @@ import logging
 import multiprocessing as mp
 import os
 
-from osc_discovery.photocatalysis.thermodynamics.tools import single_point, single_point_worker, get_logger
+from osc_discovery.photocatalysis.thermodynamics.tools import single_run_worker, get_logger
 from osc_discovery.photocatalysis.adsorption.tools import pairwise, get_neighboring_bonds_list
 
-def relax_configurations(configurations, calc_params, opt_params, multi_process=1):
-    ### Relax each configuration within the supplied list
+def relax_configurations(configurations, optlevel, calc_kwargs, keep_folders=False, multi_process=1):
+    # Generate (job_number, (single_run_parameters)) jobs to send to worker
+    jobs = list(enumerate(zip(configurations, repeat(f'opt {optlevel}'), repeat(keep_folders), repeat(calc_kwargs))))
+
     relax_logger = get_logger()
-    opt_params['relaxation'] = True
-
-    # Generate (configuration, parameters) jobs to send to worker
-    jobs = [(config, deepcopy(c_params), deepcopy(o_params)) for config, c_params, o_params in
-            zip(configurations, repeat(calc_params), repeat(opt_params))]
-
-    if opt_params['trajectory'] is not None:
-        for i, (_, _, o_params) in enumerate(jobs):
-            o_params['trajectory'] = '{}{}.traj'.format(opt_params['trajectory'], i)
-
-    start = time.perf_counter()
     relax_logger.info(f'Relaxing {len(configurations)} Configs')
-
+    start = time.perf_counter()
     if multi_process == 1:
         # Serial Relaxation
-        relaxed_configurations = []
-        for config, c_params, o_params in jobs:
-            relaxed_configurations.append(single_point(config, **c_params, **o_params))
+        relaxed_configurations = list(map(single_run_worker, jobs))
     else:
         # Parallel Relaxation
         with mp.Pool(multi_process) as pool:
-            relaxed_configurations = pool.map(single_point_worker, jobs)
+            relaxed_configurations = pool.map(single_run_worker, jobs)
 
     relax_logger.info(f'Finished Relaxing Configs. Took {time.perf_counter() - start}s')
 
     return relaxed_configurations
-
 
 def check_site_identity_volatilization(composite_relaxed, substrate, volatilization_threshold=2):
     """

@@ -6,6 +6,8 @@ import subprocess
 from copy import deepcopy
 import shutil
 from itertools import dropwhile, takewhile
+import time
+import multiprocessing
 
 from xtb.ase.calculator import XTB
 from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
@@ -27,11 +29,14 @@ def get_logger():
         logger_.addHandler(console_handler)
     return logger_
 
-def single_point_worker(jobs):
-    molecule, calc_param_kwargs, opt_param_kwargs = jobs
-    return single_point(molecule, **calc_param_kwargs, **opt_param_kwargs)
+def single_run_worker(job):
+    # job: tuple( job_number, (molecule, runtype, keep_folder boolean, calc_kwargs_dictionary) )
+    # Unpack job and return single_run() worker that can be used in multiprocessing code
+    job_num, job_input = job
+    mol, runt, keepf, calc_kwargs = job_input
+    return single_run(mol, runtype=runt, keep_folder=keepf, job_number=job_num, **calc_kwargs)
 
-def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
+def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calculator_kwargs):
     """
     Execute XTB calculations on molecule
     (see also man page: https://github.com/grimme-lab/xtb/blob/main/man/xtb.1.adoc)
@@ -56,13 +61,11 @@ def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
     # parallel: None, number of cores to devote
     # ceasefiles: , stop file printout (not all files are always halted)
     """
-
     assert "OMP_NUM_THREADS" in os.environ, "'OMP_NUM_THREADS' env var not set, unparallelized calc, very slow"
     mol = deepcopy(molecule)
 
     # Create folder
-    num_run_folders_cwd = len([folder for folder in os.listdir() if 'run_' in folder])
-    fname = f'run_{num_run_folders_cwd}'
+    fname = f'run_{job_number}'
     os.mkdir(fname)
     os.chdir(fname)
 
@@ -93,7 +96,7 @@ def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
 
     os.chdir('..')
     if keep_folder:
-        mol.info['fname'] = os.getcwd()
+        mol.info['fname'] = os.path.join(os.getcwd(), fname)
     else:
         shutil.rmtree(fname)
 
@@ -153,22 +156,11 @@ def parse_zpe(string):
             zpe_ = float(line.split()[4]) * Hartree # in eV
             return zpe_
 
-
-
 def calculate_free_energies(s, OH, O, OOH):
     ### Calculate reaction free energies of *, *OH, *O, *OOH species
-    if 'zpe' not in s.info:
-        ZPEs = zero_point_energy(s, s.info['calc_params'])
-        ZPEOH = zero_point_energy(OH, s.info['calc_params'])
-        ZPEO = zero_point_energy(O, s.info['calc_params'])
-        ZPEOOH = zero_point_energy(OOH, s.info['calc_params'])
-    else:
-        ZPEs = s.info['zpe']
-        ZPEOH = OH.info['zpe']
-        ZPEO = O.info['zpe']
-        ZPEOOH = OOH.info['zpe']
-
+    assert 'zpe' in s.info, "No frequency analysis done yet"
     Es, EOH, EO, EOOH = s.info['energy'], OH.info['energy'], O.info['energy'], OOH.info['energy']
+    ZPEs, ZPEOH, ZPEO, ZPEOOH = s.info['zpe'], OH.info['zpe'], O.info['zpe'], OOH.info['zpe']
 
     dG1 = (EOH + ZPEOH) - (Es + ZPEs) + dG1_CORR
     dG2 = (EO + ZPEO) - (EOH + ZPEOH) + dG2_CORR

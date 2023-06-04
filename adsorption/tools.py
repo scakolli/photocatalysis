@@ -5,7 +5,7 @@ import openbabel.pybel as pb
 
 from osc_discovery.cheminformatics.cheminformatics_misc import ase2xyz
 from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
-from osc_discovery.photocatalysis.thermodynamics.tools import single_point
+from osc_discovery.photocatalysis.thermodynamics.tools import single_run
 
 
 def pairwise(iterable):
@@ -66,7 +66,7 @@ def prepare_substrate(smile_string, calculator_params):
     substrate = substrate_confs.pop(0) # Lowest energy conf
 
     # Relax at the tight-binding level with xTB
-    substrate = single_point(substrate, **calculator_params, relaxation=True, fmax=0.005)
+    substrate = single_run(substrate, runtype='opt vtight', **calculator_params)
 
     # Attach useful information to the substrate object
     total_num_nonHs = len(substrate) - substrate.get_chemical_symbols().count('H')  # number of non-hydrogen atoms
