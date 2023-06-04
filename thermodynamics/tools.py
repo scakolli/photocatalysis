@@ -5,6 +5,7 @@ import logging
 import subprocess
 from copy import deepcopy
 import shutil
+from itertools import dropwhile, takewhile
 
 from xtb.ase.calculator import XTB
 from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
@@ -53,7 +54,7 @@ def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
     # gbsa : None, implicit solvation with gbsa
     # alpb : None, implicit solvation with alpb
     # parallel: None, number of cores to devote
-    # ceasefiles: , stop file printout (not all files are halted)
+    # ceasefiles: , stop file printout (not all files are always halted)
     """
 
     assert "OMP_NUM_THREADS" in os.environ, "'OMP_NUM_THREADS' env var not set, unparallelized calc, very slow"
@@ -67,27 +68,32 @@ def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
 
     # Build command
     mol.write('scratch.xyz')
-    cmd = f'xtb scratch.xyz --{runtype}'
+    cmd = f'xtb scratch.xyz --{runtype} --strict'
     for key, value in calculator_kwargs.items():
         cmd += f" --{key} {value}"
 
     # Execute command
     process_output = subprocess.run((cmd), shell=True, capture_output=True)
     stdoutput = process_output.stdout.decode('UTF-8')
-    assert process_output.returncode == 0, "Abnormal Termination of xTB calculation"
 
-    # Update molecule geometry, parse output for energies/homo/lumo/etc. and attach info to molecule, clean up folders
+    if process_output.returncode != 0:
+        # Abnormal termination of xtb, errors are encapsulated by '###'
+        os.chdir('..')
+        error = list(dropwhile(lambda line: "###" not in line, stdoutput.splitlines()))
+        raise RuntimeError('Abnormal termination of xtb \n'+'\n'.join(error))
+
+    # Update molecule geometry, parse output for properties and attach info to molecule, clean up folders
     if 'opt' in runtype:
         mol = ase.io.read('xtbopt.xyz')
         del mol.info
         mol.info = deepcopy(molecule.info)
 
-    out_dict = parse_stdoutput(stdoutput)
+    out_dict = parse_stdoutput(stdoutput, runtype)
     mol.info.update(out_dict)
 
     os.chdir('..')
     if keep_folder:
-        mol.info['fname'] = fname
+        mol.info['fname'] = os.getcwd()
     else:
         shutil.rmtree(fname)
 
@@ -95,7 +101,7 @@ def single(molecule, runtype='sp', keep_folder=False, **calculator_kwargs):
 
 def parse_stdoutput(xtb_output, runtype):
     # Standard output from xtb call is parsed according to runtype
-    d = {}
+    d = dict()
     if runtype == 'sp' or 'opt' in runtype:
         d['energy'], d['ehomo'], d['elumo'] = parse_energies(xtb_output)
     elif runtype == 'hess':
@@ -110,10 +116,10 @@ def parse_energies(string):
     for line in string.splitlines():
         if '(HOMO)' in line:
             # KS Homo in eV
-            homo = float(line.split()[3])
+            homo = float(line.split()[-2])
         if '(LUMO)' in line:
             # KS Lumo in eV
-            lumo = float(line.split()[2])
+            lumo = float(line.split()[-2])
         if 'TOTAL' in line:
             # Total Energy in eV
             e = float(line.split()[-3]) * Hartree
@@ -126,17 +132,17 @@ def parse_ipea(string):
     for line in string.splitlines():
         if 'delta SCC IP (eV)' in line:
             # ionization potential in eV
-            ip = float(line.split()[4])
+            ip = float(line.split()[-1])
         if 'delta SCC EA (eV)' in line:
             # electron affinity in eV
-            ea = float(line.split()[4])
+            ea = float(line.split()[-1])
         if '(HOMO)' in line and not homo_parsed:
             # KS Homo in eV
-            homo = float(line.split()[3])
+            homo = float(line.split()[-2])
             homo_parsed = True
         if '(LUMO)' in line and not lumo_parsed:
             # KS Lumo in eV
-            lumo = float(line.split()[2])
+            lumo = float(line.split()[-2])
             lumo_parsed = True
 
     return ip, ea, homo, lumo
