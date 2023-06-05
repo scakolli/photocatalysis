@@ -106,31 +106,28 @@ def parse_stdoutput(xtb_output, runtype):
     # Standard output from xtb call is parsed according to runtype
     d = dict()
     if runtype == 'sp' or 'opt' in runtype:
-        d['energy'], d['ehomo'], d['elumo'] = parse_energies(xtb_output)
+        d['energy'] = parse_energies(xtb_output)
     elif runtype == 'hess':
         d['zpe'] = parse_zpe(xtb_output)
         # Thermo parsing
     elif runtype == 'vipea':
-        d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea(xtb_output)
+        d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea_homolumo(xtb_output)
 
     return d
 
 def parse_energies(string):
     for line in string.splitlines():
-        if '(HOMO)' in line:
-            # KS Homo in eV
-            homo = float(line.split()[-2])
-        if '(LUMO)' in line:
-            # KS Lumo in eV
-            lumo = float(line.split()[-2])
         if 'TOTAL' in line:
             # Total Energy in eV
             e = float(line.split()[-3]) * Hartree
 
-    return e, homo, lumo
+    return e
 
-def parse_ipea(string):
-    # Parse IP/EA aswell as HOMO/LUMO for comparison
+def parse_ipea_homolumo(string):
+    """Parse IP/EA aswell as HOMO/LUMO for comparison
+    First HOMO/LUMO instance in stdout corresponds to neutral molecule as calculated with IPEA parametetized GFN1-xTB.
+    HOMO/LUMO with regular GFN1-xTB differs but since IPEA parameterized version is better suited for IP/EA,
+    it might correspondingly better descirbe HOMO/LUMO"""
     homo_parsed, lumo_parsed = False, False
     for line in string.splitlines():
         if 'delta SCC IP (eV)' in line:
