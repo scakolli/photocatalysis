@@ -73,8 +73,9 @@ def prepare_substrate(smile_string, calculator_params):
     substrate_confs = get_conformers(smile_string)
     substrate = substrate_confs.pop(0) # Lowest energy conf
 
-    # Relax at the tight-binding level with xTB
-    substrate = single_run(substrate, runtype='opt vtight', **calculator_params)
+    # Relax at the tight-binding level with xTB and determine zero-point energy (parallel single_point calcs)
+    substrate = single_run(substrate, runtype='opt vtight', **calculator_params, parallel=4)
+    substrate = single_run(substrate, runtype='hess', **calculator_params, parallel=4)
 
     # Attach useful information to the substrate object
     total_num_nonHs = len(substrate) - substrate.get_chemical_symbols().count('H')  # number of non-hydrogen atoms

@@ -6,6 +6,197 @@ from osc_discovery.photocatalysis.adsorption.tools import pairwise, get_neighbor
 from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH, HOOKEAN_OH, HOOKEAN_OOH_A, HOOKEAN_OOH_B
 from osc_discovery.photocatalysis.adsorption.building import build_configuration_from_site
 from osc_discovery.photocatalysis.thermodynamics.tools import multi_run, get_logger
+from osc_discovery.photocatalysis.thermodynamics.helpers import create_trajectories_from_logs
+
+def find_optimal_adsorbate_configurations(substrate, h=1.4, optlevel_low='normal', optlevel_high='vtight', keep_folders=False, multi_process=6):
+    ######## 1. OH low-fidelity relaxation and scan ########
+    calc_params = substrate.info['calc_params'].copy()
+
+    # Generate configurations for each proposed site (site: non-H atom in substrate)
+    configsOH = []
+    for site in range(substrate.info['nonH_count']):
+        # Perhaps introducing constraints here is the best way...
+        # constr_list = [HOOKEAN_OH, FixAtoms(indices=fixed_nonH_neighbor_indices(site, substrate))]
+        configsOH += build_configuration_from_site(OH, substrate, site, f=h)
+
+    # Relax configurations and keep legitimate ones
+    if keep_folders: os.mkdir('OH'), os.chdir('OH')
+    configsOH_relaxed = multi_run(configsOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
+                                  calc_kwargs=calc_params, multi_process=multi_process)
+    configsOH_filtered = filter_configurations(configsOH_relaxed, substrate)
+
+    # Rank active sites by adsorption energy
+    energies = np.array([config.info['energy'] for config in configsOH_filtered])
+    active_sites_configsOH = np.array([config.info['active_sites'][0] for config in configsOH_filtered])
+    indx_sorted = energies.argsort()
+    active_sites_ranked = active_sites_configsOH[indx_sorted]
+
+    active_site_logger = get_logger()
+    ######## 2. O and OOH relaxation ########
+    for j, _active_site in enumerate(active_sites_ranked):
+        active_site = int(_active_site)
+        active_site_logger.info(f'Testing Active Site {active_site}')
+
+        ### O intermediate
+        # For candidate low-energy active site, build O* configs and relax
+        # constrO = [FixAtoms(indices=fixed_nonH_neighbor_indices(active_site, substrate))]
+        configsO = build_configuration_from_site(O, substrate, active_site, f=h)
+
+        if keep_folders: os.chdir('..'), os.makedirs('O', exist_ok=True), os.chdir('O')
+        configsO_relaxed = multi_run(configsO, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
+                                  calc_kwargs=calc_params, multi_process=1)
+
+        # Filter for legitimate configurations and active site matches
+        configsO_filtered = filter_configurations(configsO_relaxed, substrate)
+        configsO_filtered_matched = [config for config in configsO_filtered if
+                                     active_site in config.info['active_sites']]
+
+        if not len(configsO_filtered_matched):
+            # No configs meet filtering criteria, skip to the next active site
+            continue
+        else:
+            # Find min energy configuration and calculate desired properties
+            energies = np.array([config.info['energy'] for config in configsO_filtered_matched])
+            optimal_Oconfig = configsO_filtered_matched[energies.argmin()]
+
+        ### OOH intermediate
+        # constrOOH = [HOOKEAN_OOH_A, HOOKEAN_OOH_B,
+        #              FixAtoms(indices=fixed_nonH_neighbor_indices(active_site, substrate))]
+        configsOOH = build_configuration_from_site(OOH, substrate, active_site, f=h)
+
+        if keep_folders: os.chdir('..'), os.makedirs('OOH', exist_ok=True), os.chdir('OOH')
+        configsOOH_relaxed = multi_run(configsOOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
+                                  calc_kwargs=calc_params, multi_process=1)
+
+        configsOOH_filtered = filter_configurations(configsOOH_relaxed, substrate)
+        configsOOH_filtered_matched = [config for config in configsOOH_filtered if
+                                       active_site in config.info['active_sites']]
+
+        if keep_folders:
+            os.chdir('..')
+            create_trajectories_from_logs(os.getcwd()) # create .traj files in dirs
+
+        if not len(configsOOH_filtered_matched):
+            continue
+        else:
+            energies = np.array([config.info['energy'] for config in configsOOH_filtered_matched])
+
+            optimal_OOHconfig = configsOOH_filtered_matched[energies.argmin()]
+            optimal_OHconfig = configsOH_filtered[indx_sorted[j]]
+
+            # Remove fixed atom and hookean constraints
+            # and do a final deep-relaxation and fidelity check
+            # del optimal_OHconfig.constraints, optimal_Oconfig.constraints, optimal_OOHconfig.constraints
+            optimal_configs = [optimal_OHconfig, optimal_Oconfig, optimal_OOHconfig]
+
+            fully_optimal_configs = multi_run(optimal_configs, runtype=f'opt {optlevel_high}', keep_folders=False,
+                                  calc_kwargs=calc_params, multi_process=3)
+            optimal_configs_filtered = filter_configurations(fully_optimal_configs, substrate)
+            optimal_configs_filtered_matched = [config for config in optimal_configs_filtered if
+                                                active_site in config.info['active_sites']]
+
+            if len(optimal_configs_filtered_matched) == 3:
+                active_site_logger.info(f'Optimal Active Site Found: {active_site}')
+                return optimal_configs_filtered_matched
+            else:
+                continue
+
+    active_site_logger.error('No Suitable Active Site')
+
+def find_optimal_adsorbate_configurations_sequential(substrate, h=1.4, optlevel_low='normal', optlevel_high='vtight', keep_folders=False, multi_process=6):
+    ######## 1. OH low-fidelity relaxation and scan ########
+    calc_params = substrate.info['calc_params'].copy()
+
+    # Generate configurations for each proposed site (site: non-H atom in substrate)
+    configsOH = []
+    for site in range(substrate.info['nonH_count']):
+        # Perhaps introducing constraints here is the best way...
+        # constr_list = [HOOKEAN_OH, FixAtoms(indices=fixed_nonH_neighbor_indices(site, substrate))]
+        configsOH += build_configuration_from_site(OH, substrate, site, f=h)
+
+    # Relax configurations and keep legitimate ones
+    if keep_folders: os.mkdir('OH'), os.chdir('OH')
+    configsOH_relaxed = multi_run(configsOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
+                                  calc_kwargs=calc_params, multi_process=multi_process)
+    configsOH_filtered = filter_configurations(configsOH_relaxed, substrate)
+
+    # Rank active sites by adsorption energy
+    energies = np.array([config.info['energy'] for config in configsOH_filtered])
+    active_sites_configsOH = np.array([config.info['active_sites'][0] for config in configsOH_filtered])
+    indx_sorted = energies.argsort()
+    active_sites_ranked = active_sites_configsOH[indx_sorted]
+
+    active_site_logger = get_logger()
+    ######## 2. O and OOH relaxation ########
+    for j, _active_site in enumerate(active_sites_ranked):
+        active_site = int(_active_site)
+        active_site_logger.info(f'Testing Active Site {active_site}')
+
+        ### O intermediate
+        # For candidate low-energy active site, build O* configs and relax
+        # constrO = [FixAtoms(indices=fixed_nonH_neighbor_indices(active_site, substrate))]
+        configsO = build_configuration_from_site(O, substrate, active_site, f=h)
+
+        if keep_folders: os.chdir('..'), os.makedirs('O', exist_ok=True), os.chdir('O')
+        configsO_relaxed = multi_run(configsO, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
+                                  calc_kwargs=calc_params, multi_process=1)
+
+        # Filter for legitimate configurations and active site matches
+        configsO_filtered = filter_configurations(configsO_relaxed, substrate)
+        configsO_filtered_matched = [config for config in configsO_filtered if
+                                     active_site in config.info['active_sites']]
+
+        if not len(configsO_filtered_matched):
+            # No configs meet filtering criteria, skip to the next active site
+            continue
+        else:
+            # Find min energy configuration and calculate desired properties
+            energies = np.array([config.info['energy'] for config in configsO_filtered_matched])
+            optimal_Oconfig = configsO_filtered_matched[energies.argmin()]
+
+        ### OOH intermediate
+        # constrOOH = [HOOKEAN_OOH_A, HOOKEAN_OOH_B,
+        #              FixAtoms(indices=fixed_nonH_neighbor_indices(active_site, substrate))]
+        configsOOH = build_configuration_from_site(OOH, substrate, active_site, f=h)
+
+        if keep_folders: os.chdir('..'), os.makedirs('OOH', exist_ok=True), os.chdir('OOH')
+        configsOOH_relaxed = multi_run(configsOOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
+                                  calc_kwargs=calc_params, multi_process=1)
+
+        configsOOH_filtered = filter_configurations(configsOOH_relaxed, substrate)
+        configsOOH_filtered_matched = [config for config in configsOOH_filtered if
+                                       active_site in config.info['active_sites']]
+
+        if keep_folders:
+            os.chdir('..')
+            create_trajectories_from_logs(os.getcwd()) # create .traj files in dirs
+
+        if not len(configsOOH_filtered_matched):
+            continue
+        else:
+            energies = np.array([config.info['energy'] for config in configsOOH_filtered_matched])
+
+            optimal_OOHconfig = configsOOH_filtered_matched[energies.argmin()]
+            optimal_OHconfig = configsOH_filtered[indx_sorted[j]]
+
+            # Remove fixed atom and hookean constraints
+            # and do a final deep-relaxation and fidelity check
+            # del optimal_OHconfig.constraints, optimal_Oconfig.constraints, optimal_OOHconfig.constraints
+            optimal_configs = [optimal_OHconfig, optimal_Oconfig, optimal_OOHconfig]
+
+            fully_optimal_configs = multi_run(optimal_configs, runtype=f'opt {optlevel_high}', keep_folders=False,
+                                  calc_kwargs=calc_params, multi_process=3)
+            optimal_configs_filtered = filter_configurations(fully_optimal_configs, substrate)
+            optimal_configs_filtered_matched = [config for config in optimal_configs_filtered if
+                                                active_site in config.info['active_sites']]
+
+            if len(optimal_configs_filtered_matched) == 3:
+                active_site_logger.info(f'Optimal Active Site Found: {active_site}')
+                return optimal_configs_filtered_matched
+            else:
+                continue
+
+    active_site_logger.error('No Suitable Active Site')
 
 def check_site_identity_volatilization(composite_relaxed, substrate, volatilization_threshold=2):
     """
@@ -66,98 +257,3 @@ def filter_configurations(configurations, substrate):
         if checks: filtered_configs.append(config)
 
     return filtered_configs
-
-def find_optimal_adsorbate_configurations(substrate, h=1.4, optlevel_low='normal', optlevel_high='vtight', keep_folders=False, multi_process=6):
-    ######## 1. OH low-fidelity relaxation and scan ########
-    calc_params = substrate.info['calc_params'].copy()
-
-    # Generate configurations for each proposed site (site: non-H atom in substrate)
-    configsOH = []
-    for site in range(substrate.info['nonH_count']):
-        # Perhaps introducing constraints here is the best way...
-        # constr_list = [HOOKEAN_OH, FixAtoms(indices=fixed_nonH_neighbor_indices(site, substrate))]
-        configsOH += build_configuration_from_site(OH, substrate, site, f=h)
-
-    return configsOH
-    # Relax configurations and keep legitimate ones
-    if keep_folders: os.mkdir('OH'), os.chdir('OH')
-    configsOH_relaxed = multi_run(configsOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
-                                  calc_kwargs=calc_params, multi_process=multi_process)
-    configsOH_filtered = filter_configurations(configsOH_relaxed, substrate)
-
-    # Rank active sites by adsorption energy
-    energies = np.array([config.info['energy'] for config in configsOH_filtered])
-    active_sites_configsOH = np.array([config.info['active_sites'][0] for config in configsOH_filtered])
-    indx_sorted = energies.argsort()
-    active_sites_ranked = active_sites_configsOH[indx_sorted]
-
-    active_site_logger = get_logger()
-    ######## 2. O and OOH relaxation ########
-    for j, _active_site in enumerate(active_sites_ranked):
-        active_site = int(_active_site)
-        active_site_logger.info(f'Testing Active Site {active_site}')
-
-        ### O intermediate
-        # For candidate low-energy active site, build O* configs and relax
-        # constrO = [FixAtoms(indices=fixed_nonH_neighbor_indices(active_site, substrate))]
-        configsO = build_configuration_from_site(O, substrate, active_site, f=h)
-
-        if keep_folders: os.chdir('..'), os.makedirs('O', exist_ok=True), os.chdir('O')
-        configsO_relaxed = multi_run(configsO, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
-                                  calc_kwargs=calc_params, multi_process=1)
-
-        # Filter for legitimate configurations and active site matches
-        configsO_filtered = filter_configurations(configsO_relaxed, substrate)
-        configsO_filtered_matched = [config for config in configsO_filtered if
-                                     active_site in config.info['active_sites']]
-
-        if not len(configsO_filtered_matched):
-            # No configs meet filtering criteria, skip to the next active site
-            continue
-        else:
-            # Find min energy configuration and calculate desired properties
-            energies = np.array([config.info['energy'] for config in configsO_filtered_matched])
-            optimal_Oconfig = configsO_filtered_matched[energies.argmin()]
-
-        ### OOH intermediate
-        # constrOOH = [HOOKEAN_OOH_A, HOOKEAN_OOH_B,
-        #              FixAtoms(indices=fixed_nonH_neighbor_indices(active_site, substrate))]
-        configsOOH = build_configuration_from_site(OOH, substrate, active_site, f=h)
-
-        if keep_folders: os.chdir('..'), os.makedirs('OOH', exist_ok=True), os.chdir('OOH')
-        configsOOH_relaxed = multi_run(configsOOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
-                                  calc_kwargs=calc_params, multi_process=1)
-
-        configsOOH_filtered = filter_configurations(configsOOH_relaxed, substrate)
-        configsOOH_filtered_matched = [config for config in configsOOH_filtered if
-                                       active_site in config.info['active_sites']]
-
-        if keep_folders:
-            os.chdir('..')
-
-        if not len(configsOOH_filtered_matched):
-            continue
-        else:
-            energies = np.array([config.info['energy'] for config in configsOOH_filtered_matched])
-
-            optimal_OOHconfig = configsOOH_filtered_matched[energies.argmin()]
-            optimal_OHconfig = configsOH_filtered[indx_sorted[j]]
-
-            # Remove fixed atom and hookean constraints
-            # and do a final deep-relaxation and fidelity check
-            # del optimal_OHconfig.constraints, optimal_Oconfig.constraints, optimal_OOHconfig.constraints
-            optimal_configs = [optimal_OHconfig, optimal_Oconfig, optimal_OOHconfig]
-
-            fully_optimal_configs = multi_run(optimal_configs, runtype=f'opt {optlevel_high}', keep_folders=False,
-                                  calc_kwargs=calc_params, multi_process=3)
-            optimal_configs_filtered = filter_configurations(fully_optimal_configs, substrate)
-            optimal_configs_filtered_matched = [config for config in optimal_configs_filtered if
-                                                active_site in config.info['active_sites']]
-
-            if len(optimal_configs_filtered_matched) == 3:
-                active_site_logger.info(f'Optimal Active Site Found: {active_site}')
-                return optimal_configs_filtered_matched
-            else:
-                continue
-
-    active_site_logger.error('No Suitable Active Site')

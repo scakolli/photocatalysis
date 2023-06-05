@@ -11,7 +11,7 @@ import multiprocessing
 
 import ase
 from osc_discovery.photocatalysis.thermodynamics.constants import dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR
-from osc_discovery.photocatalysis.thermodynamics.parsing_helpers import parse_stdoutput
+from osc_discovery.photocatalysis.thermodynamics.helpers import parse_stdoutput
 
 def get_logger():
     logger_ = logging.getLogger()
@@ -47,6 +47,7 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
     # parallel: None, number of cores to devote
     # ceasefiles: , stop file printout (not all files are always halted)
     """
+    error_logger = get_logger()
     assert "OMP_NUM_THREADS" in os.environ, "'OMP_NUM_THREADS' env var not set, unparallelized calc, very slow"
     mol = deepcopy(molecule)
 
@@ -62,12 +63,12 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
         cmd += f" --{key} {value}"
 
     # Execute command
-    print(job_number)
     process_output = subprocess.run((cmd), shell=True, capture_output=True)
     stdoutput = process_output.stdout.decode('UTF-8')
 
     ################# Error Handling #################
     if process_output.returncode != 0:
+        error_logger.error(f'Runtime Errors Encountered, attempting to solve')
         # Abnormal termination of xtb, errors are encapsulated by '###'
         error = list(dropwhile(lambda line: "###" not in line, stdoutput.splitlines()))
 
@@ -83,7 +84,6 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
                 # etemp not in calc params... introduce it
                 cmd_hot_restart = cmd + ' --etemp 1000' + ' && ' + cmd + ' --restart'
 
-            print(cmd_hot_restart)
             process_output = subprocess.run((cmd_hot_restart), shell=True, capture_output=True)
             stdoutput = process_output.stdout.decode('UTF-8')
 
