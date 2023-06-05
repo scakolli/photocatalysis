@@ -62,14 +62,52 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
         cmd += f" --{key} {value}"
 
     # Execute command
+    print(job_number)
     process_output = subprocess.run((cmd), shell=True, capture_output=True)
     stdoutput = process_output.stdout.decode('UTF-8')
 
+    ################# Error Handling #################
     if process_output.returncode != 0:
         # Abnormal termination of xtb, errors are encapsulated by '###'
-        os.chdir('..')
         error = list(dropwhile(lambda line: "###" not in line, stdoutput.splitlines()))
-        raise RuntimeError('Abnormal termination of xtb \n'+'\n'.join(error))
+
+        if '-1- scf: Self consistent charge iterator did not converge' in error:
+            # Calculation/optimization failed to converge because of lack scf convergence
+            # Raise fermi-smearing temp (1000 K) and restart original calculation (298.15K)
+            # from 'xtbrestart' created during the hot run
+            try:
+                # Basically, try: 'xtb scratch.xyz --etemp 1000 && xtb scratch.xyz --restart'
+                cmd_hot_restart = cmd.replace('--etemp {}'.format(calculator_kwargs['etemp']), f'--etemp 1000')
+                cmd_hot_restart += ' && ' + cmd + ' --restart'
+            except KeyError:
+                # etemp not in calc params... introduce it
+                cmd_hot_restart = cmd + ' --etemp 1000' + ' && ' + cmd + ' --restart'
+
+            print(cmd_hot_restart)
+            process_output = subprocess.run((cmd_hot_restart), shell=True, capture_output=True)
+            stdoutput = process_output.stdout.decode('UTF-8')
+
+            if process_output.returncode != 0:
+                if 'opt' in runtype:
+                    # Last ditch effort at getting convergence
+                    # If we are optimizing, we can use xtbopt.xyz at 1000 K as a start geometry, and optimize
+                    # at 300 K from there
+                    cmd_last = cmd.replace('scratch.xyz', 'xtbopt.xyz')
+                    process_output = subprocess.run((cmd_last), shell=True, capture_output=True)
+                    stdoutput = process_output.stdout.decode('UTF-8')
+
+                    if process_output.returncode != 0:
+                        os.chdir('..')
+                        raise RuntimeError('optimizing from high temp config failed to help scf convergence')
+
+                else:
+                    os.chdir('..')
+                    raise RuntimeError('restart with etemp increase failed to help scf convergence')
+
+        else:
+            os.chdir('..')
+            raise RuntimeError('Abnormal termination of xtb \n'+'\n'.join(error))
+    ################# Error Handling Finished #################
 
     # Update molecule geometry, parse output for properties and attach info to molecule, clean up folders
     if 'opt' in runtype:

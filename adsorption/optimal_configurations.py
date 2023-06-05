@@ -78,6 +78,7 @@ def find_optimal_adsorbate_configurations(substrate, h=1.4, optlevel_low='normal
         # constr_list = [HOOKEAN_OH, FixAtoms(indices=fixed_nonH_neighbor_indices(site, substrate))]
         configsOH += build_configuration_from_site(OH, substrate, site, f=h)
 
+    return configsOH
     # Relax configurations and keep legitimate ones
     if keep_folders: os.mkdir('OH'), os.chdir('OH')
     configsOH_relaxed = multi_run(configsOH, runtype=f'opt {optlevel_low}', keep_folders=keep_folders,
