@@ -1,7 +1,9 @@
 from itertools import tee
 from copy import deepcopy
+
 from rdkit import Chem
 import openbabel.pybel as pb
+from ase.constraints import FixAtoms
 
 from osc_discovery.cheminformatics.cheminformatics_misc import ase2xyz
 from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
@@ -35,6 +37,12 @@ def ase2rdkit_valencies(atoms, removeHs=False):
 def get_neighboring_bonds_list(substrate):
     # Convert to rdkit molecule and then get bonds
     return [sorted([nbr.GetIdx() for nbr in atom.GetNeighbors()]) for atom in ase2rdkit_valencies(substrate).GetAtoms()]
+
+def fixed_nonH_neighbor_indices(atom_index, substrate, free_nonH_neighbors=12):
+    # Returns indices of non-hydrogen atoms that are to be frozen during relaxation
+    # What is the average non_hydrogenic size of a given moeity thats added via the morphing operations?
+    nonH_nearest_neighbors = substrate.get_distances(atom_index, indices=[range(substrate.info['nonH_count'])]).argsort()
+    return nonH_nearest_neighbors[free_nonH_neighbors+1:]
 
 def prepare_substrate(smile_string, calculator_params):
     """Prepare the substrate for further use

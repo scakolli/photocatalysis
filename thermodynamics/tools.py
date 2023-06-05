@@ -5,20 +5,13 @@ import logging
 import subprocess
 from copy import deepcopy
 import shutil
-from itertools import dropwhile, takewhile
+from itertools import dropwhile, takewhile, repeat
 import time
 import multiprocessing
 
-from xtb.ase.calculator import XTB
-from xtb.libxtb import VERBOSITY_FULL, VERBOSITY_MUTED
-from xtb.interface import Calculator, Param
-from xtb.utils import get_method as get_xtb_method
-
 import ase
-from ase.optimize import LBFGS
-from ase.vibrations import Vibrations
-from ase.units import Hartree, Bohr
 from osc_discovery.photocatalysis.thermodynamics.constants import dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR
+from osc_discovery.photocatalysis.thermodynamics.parsing_helpers import parse_stdoutput
 
 def get_logger():
     logger_ = logging.getLogger()
@@ -28,13 +21,6 @@ def get_logger():
         console_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s: %(message)s'))
         logger_.addHandler(console_handler)
     return logger_
-
-def single_run_worker(job):
-    # job: tuple( job_number, (molecule, runtype, keep_folder boolean, calc_kwargs_dictionary) )
-    # Unpack job and return single_run() worker that can be used in multiprocessing code
-    job_num, job_input = job
-    mol, runt, keepf, calc_kwargs = job_input
-    return single_run(mol, runtype=runt, keep_folder=keepf, job_number=job_num, **calc_kwargs)
 
 def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calculator_kwargs):
     """
@@ -102,56 +88,31 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
 
     return mol
 
-def parse_stdoutput(xtb_output, runtype):
-    # Standard output from xtb call is parsed according to runtype
-    d = dict()
-    if runtype == 'sp' or 'opt' in runtype:
-        d['energy'] = parse_energies(xtb_output)
-    elif runtype == 'hess':
-        d['zpe'] = parse_zpe(xtb_output)
-        # Thermo parsing
-    elif runtype == 'vipea':
-        d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea_homolumo(xtb_output)
+def single_run_worker(job):
+    # job: tuple( job_number, (molecule, runtype, keep_folder boolean, calc_kwargs_dictionary) )
+    # Unpack job and return single_run() worker that can be used in multiprocessing code
+    job_num, job_input = job
+    mol, runt, keepf, calc_kwargs = job_input
+    return single_run(mol, runtype=runt, keep_folder=keepf, job_number=job_num, **calc_kwargs)
 
-    return d
+def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=1):
+    # Generate (job_number, (single_run_parameters)) jobs to send to worker
+    jobs = list(enumerate(zip(molecule_list, repeat(runtype), repeat(keep_folders), repeat(calc_kwargs))))
 
-def parse_energies(string):
-    for line in string.splitlines():
-        if 'TOTAL' in line:
-            # Total Energy in eV
-            e = float(line.split()[-3]) * Hartree
+    job_logger = get_logger()
+    job_logger.info(f'Jobs to do: {len(molecule_list)}')
+    start = time.perf_counter()
+    if multi_process == 1:
+        # Serial Relaxation
+        completed_molecule_list = list(map(single_run_worker, jobs))
+    else:
+        # Parallel Relaxation
+        with multiprocessing.Pool(multi_process) as pool:
+            completed_molecule_list = pool.map(single_run_worker, jobs)
 
-    return e
+    job_logger.info(f'Finished jobs. Took {time.perf_counter() - start}s')
 
-def parse_ipea_homolumo(string):
-    """Parse IP/EA aswell as HOMO/LUMO for comparison
-    First HOMO/LUMO instance in stdout corresponds to neutral molecule as calculated with IPEA parametetized GFN1-xTB.
-    HOMO/LUMO with regular GFN1-xTB differs but since IPEA parameterized version is better suited for IP/EA,
-    it might correspondingly better descirbe HOMO/LUMO"""
-    homo_parsed, lumo_parsed = False, False
-    for line in string.splitlines():
-        if 'delta SCC IP (eV)' in line:
-            # ionization potential in eV
-            ip = float(line.split()[-1])
-        if 'delta SCC EA (eV)' in line:
-            # electron affinity in eV
-            ea = float(line.split()[-1])
-        if '(HOMO)' in line and not homo_parsed:
-            # KS Homo in eV
-            homo = float(line.split()[-2])
-            homo_parsed = True
-        if '(LUMO)' in line and not lumo_parsed:
-            # KS Lumo in eV
-            lumo = float(line.split()[-2])
-            lumo_parsed = True
-
-    return ip, ea, homo, lumo
-
-def parse_zpe(string):
-    for line in string.splitlines():
-        if 'zero point energy' in line:
-            zpe_ = float(line.split()[4]) * Hartree # in eV
-            return zpe_
+    return completed_molecule_list
 
 def calculate_free_energies(s, OH, O, OOH):
     ### Calculate reaction free energies of *, *OH, *O, *OOH species

@@ -51,6 +51,7 @@ def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
         a.translate(p + n * f)
 
         # Form composite system
+        s.info.clear() #else, you attach s.info to composites and thats unnecessary baggage during computations
         composite = s + a
         config_list.append(composite)
 
