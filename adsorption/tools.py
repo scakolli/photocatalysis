@@ -9,6 +9,13 @@ from osc_discovery.cheminformatics.cheminformatics_misc import ase2xyz
 from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
 from osc_discovery.photocatalysis.thermodynamics.tools import single_run
 
+# Keukilization errors when attempting to read 'xyz' files... openbabel doesnt always correctly assign double bonds
+# to a molecule, since there can be multiple ways of doing so when all you pass to the parser is the positional coords
+# of your molecule. For our purposes (get_neighboring_bonds_list()), it shouldn't matter as we are simply trying to calc
+# a neighboring bonds list, and since coordinates of nuclei are unaffected by these errors (only electron distribution
+# in the lewis structure rdkit representation), which should still get the correct neighbor assignment. ASE has a geometry
+# analysis module for this purpose, but rdkit is fast
+pb.ob.obErrorLog.SetOutputLevel(0) # Only Critical errors (0)... default Warning (1)
 
 def pairwise(iterable):
     "s -> (s0,s1), (s1,s2), (s2, s3), ..."

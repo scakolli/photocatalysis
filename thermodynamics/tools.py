@@ -68,7 +68,7 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
 
     ################# Error Handling #################
     if process_output.returncode != 0:
-        error_logger.error(f'Runtime Errors Encountered, attempting to solve')
+        error_logger.error(f'Runtime Errors Encountered in job {job_number}, attempting to solve')
         # Abnormal termination of xtb, errors are encapsulated by '###'
         error = list(dropwhile(lambda line: "###" not in line, stdoutput.splitlines()))
 
@@ -154,14 +154,15 @@ def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None
 
 def calculate_free_energies(s, OH, O, OOH):
     ### Calculate reaction free energies of *, *OH, *O, *OOH species
-    assert 'zpe' in s.info, "No frequency analysis done yet"
+    assert 'zpe' in OH.info, "No frequency analysis done yet"
     Es, EOH, EO, EOOH = s.info['energy'], OH.info['energy'], O.info['energy'], OOH.info['energy']
     ZPEs, ZPEOH, ZPEO, ZPEOOH = s.info['zpe'], OH.info['zpe'], O.info['zpe'], OOH.info['zpe']
+    TSs, TSOH, TSO, TSOOH = s.info['entropy'], OH.info['entropy'], O.info['entropy'], OOH.info['entropy']
 
-    dG1 = (EOH + ZPEOH) - (Es + ZPEs) + dG1_CORR
-    dG2 = (EO + ZPEO) - (EOH + ZPEOH) + dG2_CORR
-    dG3 = (EOOH + ZPEOOH) - (EO + ZPEO) + dG3_CORR
-    dG4 = (Es + ZPEs) - (EOOH + ZPEOOH) + dG4_CORR
+    dG1 = (EOH + ZPEOH - TSOH) - (Es + ZPEs - TSs) + dG1_CORR
+    dG2 = (EO + ZPEO - TSO) - (EOH + ZPEOH - TSOH) + dG2_CORR
+    dG3 = (EOOH + ZPEOOH - TSOOH) - (EO + ZPEO - TSO) + dG3_CORR
+    dG4 = (Es + ZPEs - TS) - (EOOH + ZPEOOH - TSOOH) + dG4_CORR
 
     Gs = np.array((dG1, dG2, dG3, dG4))
 
