@@ -22,8 +22,8 @@ IPEA_EMPIRICAL_SHIFT = 4.8455
 """DFT derived E and ZPE 
 GFN2-xTB, fmax=0.005 eV/Angstrom, accuracy=0.2"""
 # Energy
-E_H2 = -26.74025284322724
-E_H2O = -137.9765422815829
+# E_H2 = -26.74025284322724
+# E_H2O = -137.9765422815829
 
 # ZPE DFT
 # ZPE_H2_DFT = 0.2326865538281221
@@ -37,23 +37,23 @@ So long as both these quanties are quoted w.r.t. same reference (i.e. STP), ther
 with DFT calculated energies, as we are only interested in taking differences of these quantities"""
 
 # ZPE
-ZPE_H2 = 0.27
-ZPE_H2O = 0.56
+# ZPE_H2 = 0.27
+# ZPE_H2O = 0.56
 
 # Gas Phase Entropies
-TS_H2_g = 0.41
-TS_H2O_g = 0.67
+# TS_H2_g = 0.41
+# TS_H2O_g = 0.67
 
 # Free energies
-G_H2_g = E_H2 + ZPE_H2 - TS_H2_g
-G_H2O_g = E_H2O + ZPE_H2O - TS_H2O_g
+# G_H2_g = E_H2 + ZPE_H2 - TS_H2_g
+# G_H2O_g = E_H2O + ZPE_H2O - TS_H2O_g
 
 """Experimental water splitting free energy change
 Used to avoid problematic calculation of Oxygen gas free energy
 G_O2_g = 2 * dG_ws + 2 * (G_H2O_l - G_H2_g), where the free energy of G_H2O_l = G_H2O_g at 298.15K and 0.035bar
 This as to avoid an inaccurate estimation of liquid free energy (hydrogen bond underestimation)"""
 
-dG_WS = 2.46 # per water molecule
+# dG_WS = 2.46 # per water molecule
 
 """Free Energy Constants
 Since these variables are unchanging, the later half of each expression is constant, thus each reaction free energy

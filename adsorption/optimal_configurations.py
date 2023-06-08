@@ -84,7 +84,7 @@ def find_optimal_adsorbate_configurations_sequential(substrate, h=1.4, optlevel_
 
     # Rank active sites by adsorption energy
     energies = np.array([config.info['energy'] for config in configsOH_filtered])
-    active_sites_configsOH = np.array([config.info['active_sites'][0] for config in configsOH_filtered])
+    active_sites_configsOH = np.array([config.info['active_sites'] for config in configsOH_filtered])
     indx_sorted = energies.argsort()
     active_sites_ranked = active_sites_configsOH[indx_sorted]
 
@@ -184,8 +184,8 @@ def check_site_identity_volatilization(composite_relaxed, substrate, volatilizat
     bonds_dict = dict(zip(range(len(b)), b))
 
     ### 4. Active-site Check
-    # Where is the Oxygen in the adsorbate bonded
-    sites = [sub_indx for sub_indx in bonds[ads_indx[0]] if sub_indx not in ads_indx]
+    # Where is the Oxygen in the adsorbate bonded.
+    sites = [bonded_atom_index for bonded_atom_index in bonds[ads_indx[0]] if bonded_atom_index not in ads_indx]
 
     ### 1. Substrate Check
     # Remove the adsorbate from the bonds dict and compare the resulting dict to the original substrate bonds list
@@ -219,13 +219,14 @@ def check_site_identity_volatilization(composite_relaxed, substrate, volatilizat
     # min_dist = c.get_distances(ads_indx[0], indices=[i for i in range(s.info['nonH_count'])]).min()
     # cond3 = (min_dist < volatilization_threshold)
 
-    return sites, all([cond1, cond2, cond3])
+    # Return a site and whether or not conditions pass
+    return sites[0], all([cond1, cond2, cond3])
 
 def filter_configurations(configurations, substrate):
     ### Perform fidelity checks on a list of configurations, attach active site info, and filter
     filtered_configs = []
     for config in configurations:
-        config.info['active_sites'], checks = check_site_identity_volatilization(config, substrate)
+        config.info['active_site'], checks = check_site_identity_volatilization(config, substrate)
 
         if checks: filtered_configs.append(config)
 

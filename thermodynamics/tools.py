@@ -168,6 +168,21 @@ def calculate_free_energies(s, OH, O, OOH):
 
     return Gs
 
+def free_energies(Es, EOH, EO, EOOH, ZPE_TS=None):
+    ### Calculate reaction free energies of *, *OH, *O, *OOH species
+
+    # if ZPE_TS is None:
+
+
+    dG1 = (EOH + ZPEOH - TSOH) - (Es + ZPEs - TSs) + dG1_CORR
+    dG2 = (EO + ZPEO - TSO) - (EOH + ZPEOH - TSOH) + dG2_CORR
+    dG3 = (EOOH + ZPEOOH - TSOOH) - (EO + ZPEO - TSO) + dG3_CORR
+    dG4 = (Es + ZPEs - TS) - (EOOH + ZPEOOH - TSOOH) + dG4_CORR
+
+    Gs = np.array((dG1, dG2, dG3, dG4))
+
+    return Gs
+
 def free_energy_diagram(Gs):
 
     x = [0, 1, 2, 3, 4]
