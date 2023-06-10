@@ -15,6 +15,7 @@ SHE_VACUUM_POTENTIAL = 4.44
 
 """Static Free energy expression corrections (in eV)"""
 dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR = 124.64641585996927, -13.44012642161362, 124.64641585996927, -230.93270529832492
+dE1_CORR, dE2_CORR, dE3_CORR, dE4_CORR = 124.60641585996929, -13.37012642161362, 124.60641585996929, -230.011305298325
 
 """Empirical shift of xTB-IPEA (eV). Still not sure what this is exaxtly..."""
 IPEA_EMPIRICAL_SHIFT = 4.8455
@@ -22,8 +23,8 @@ IPEA_EMPIRICAL_SHIFT = 4.8455
 """DFT derived E and ZPE 
 GFN2-xTB, fmax=0.005 eV/Angstrom, accuracy=0.2"""
 # Energy
-# E_H2 = -26.74025284322724
-# E_H2O = -137.9765422815829
+E_H2 = -26.74025284322724
+E_H2O = -137.9765422815829
 
 # ZPE DFT
 # ZPE_H2_DFT = 0.2326865538281221
@@ -39,10 +40,12 @@ with DFT calculated energies, as we are only interested in taking differences of
 # ZPE
 # ZPE_H2 = 0.27
 # ZPE_H2O = 0.56
+# ZPE_O2 = 0.05
 
 # Gas Phase Entropies
 # TS_H2_g = 0.41
 # TS_H2O_g = 0.67
+# TS_O_g = 0.32
 
 # Free energies
 # G_H2_g = E_H2 + ZPE_H2 - TS_H2_g
@@ -54,6 +57,8 @@ G_O2_g = 2 * dG_ws + 2 * (G_H2O_l - G_H2_g), where the free energy of G_H2O_l = 
 This as to avoid an inaccurate estimation of liquid free energy (hydrogen bond underestimation)"""
 
 # dG_WS = 2.46 # per water molecule
+# dH_WS = 2.9657
+# dE_WS = dH_WS - (ZPE_O2 + ZPE_H2 - ZPE_H2)
 
 """Free Energy Constants
 Since these variables are unchanging, the later half of each expression is constant, thus each reaction free energy
@@ -79,3 +84,9 @@ dG4 = G_s - G_OOH + G_O2_g + 1/2 * G_H2_g = G_s + G_OOH + 2 * dG_WS + 2 * G_H2O_
 # dG2_CORR = 1/2 * G_H2_g
 # dG3_CORR = 1/2 * G_H2_g - G_H2O_g
 # dG4_CORR =  2 * dG_WS + 2 * G_H2O_g - 3/2 * G_H2_g
+
+# If only bond energies are considered without ZPE and entropy corrections
+# dE1_CORR = 1/2 * E_H2 - E_H2O
+# dE2_CORR = 1/2 * E_H2
+# dE3_CORR = 1/2 * E_H2 - E_H2O
+# dE4_CORR = 2 * dE_WS + 2 * E_H2O - 3/2 * E_H2

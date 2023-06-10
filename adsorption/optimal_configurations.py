@@ -220,14 +220,27 @@ def check_site_identity_volatilization(composite_relaxed, substrate, volatilizat
     # cond3 = (min_dist < volatilization_threshold)
 
     # Return a site and whether or not conditions pass
-    return sites[0], all([cond1, cond2, cond3])
+    return sites, all([cond1, cond2, cond3])
 
 def filter_configurations(configurations, substrate):
-    ### Perform fidelity checks on a list of configurations, attach active site info, and filter
-    filtered_configs = []
-    for config in configurations:
-        config.info['active_site'], checks = check_site_identity_volatilization(config, substrate)
+    ### Perform fidelity checks on a list of configurations, attach active site info, and filter for checks and duplicate sites
+    d = dict()
 
-        if checks: filtered_configs.append(config)
+    for config in configurations:
+        actv, checks = check_site_identity_volatilization(config, substrate)
+
+        if checks:
+            for a in actv:
+                if a in d:
+                    if config.info['energy'] < d[a].info['energy']:
+                        d[a] = config
+                else:
+                    d[a] = config
+
+    filtered_configs = []
+    for k, config in d.items():
+        config = deepcopy(config)
+        config.info['active_site'] = k
+        filtered_configs.append(config)
 
     return filtered_configs
