@@ -55,6 +55,18 @@ def parse_hess(string):
 
     return zpe, enthalpy, entropy, free_energy
 
+def parse_charges():
+    # Look in directory for the 'charges' file
+    with open('charges') as f:
+        charges = [float(chg) for chg in f.readlines()]
+    return charges
+
+def parse_fukui_indices(string):
+    # Parse fukui indices for each atom
+    fukui_printout_start = dropwhile(lambda line: "#        f(+)     f(-)     f(0)" not in line, string.splitlines())
+    fki = [float(l.split()[-1]) for l in list(takewhile(lambda line: "-----" not in line, od))[1:]]
+    return fki
+
 def parse_stdoutput(xtb_output, runtype):
     # Standard output from xtb call is parsed according to runtype
     d = dict()
@@ -65,6 +77,8 @@ def parse_stdoutput(xtb_output, runtype):
         # Thermo parsing
     elif runtype == 'vipea':
         d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea_homolumo(xtb_output)
+    elif runtype == 'vfukui':
+        d['fukui'] = parse_fukui_indices(xtb_output)
 
     return d
 

@@ -1,57 +1,15 @@
-from itertools import tee
+import numpy as np
 from copy import deepcopy
 
 from rdkit import Chem
-import openbabel.pybel as pb
-from ase.constraints import FixAtoms
-
-from osc_discovery.cheminformatics.cheminformatics_misc import ase2xyz
 from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
 from osc_discovery.photocatalysis.thermodynamics.tools import single_run
 
-# Keukilization errors when attempting to read 'xyz' files... openbabel doesnt always correctly assign double bonds
-# to a molecule, since there can be multiple ways of doing so when all you pass to the parser is the positional coords
-# of your molecule. For our purposes (get_neighboring_bonds_list()), it shouldn't matter as we are simply trying to calc
-# a neighboring bonds list, and since coordinates of nuclei are unaffected by these errors (only electron distribution
-# in the lewis structure rdkit representation), which should still get the correct neighbor assignment. ASE has a geometry
-# analysis module for this purpose, but rdkit is fast
-pb.ob.obErrorLog.SetOutputLevel(0) # Only Critical errors (0)... default Warning (1)
+from osc_discovery.photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped
+from osc_discovery.photocatalysis.adsorption.helpers import find_constrained_optimal_position
 
-def pairwise(iterable):
-    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
-    a, b = tee(iterable)
-    next(b, None)
-    return zip(a, b)
 
-def ase2rdkit_valencies(atoms, removeHs=False):
-    """ Convert an ASE atoms object to rdkit molecule. The ordering of the Atoms is identical."""
-
-    # Updated from previous function to skip the "sanitization" of valence count
-    # Ex. Nitrogen cannot normally have an explicit valence of 4, so when an O radical
-    # binds to N's within the substrate, sanitization will throw an error since the
-    # valence of N is greater than permitted by rdkit
-
-    a_str = ase2xyz(atoms)
-    pymol = pb.readstring("xyz", a_str)
-    mol = pymol.write("mol")
-    mol = Chem.MolFromMolBlock(mol, removeHs=removeHs, sanitize=False)
-
-    # Sanitize everything except for the valencies of the atoms
-    Chem.SanitizeMol(mol, sanitizeOps=Chem.SANITIZE_ALL ^ Chem.SANITIZE_PROPERTIES)
-
-    return mol
-
-def get_neighboring_bonds_list(substrate):
-    # Convert to rdkit molecule and then get bonds
-    return [sorted([nbr.GetIdx() for nbr in atom.GetNeighbors()]) for atom in ase2rdkit_valencies(substrate).GetAtoms()]
-
-def fixed_nonH_neighbor_indices(atom_index, substrate, free_nonH_neighbors=12):
-    # Returns indices of non-hydrogen atoms that are to be frozen during relaxation
-    # What is the average non_hydrogenic size of a given moeity thats added via the morphing operations?
-    nonH_nearest_neighbors = substrate.get_distances(atom_index, indices=[range(substrate.info['nonH_count'])]).argsort()
-    return nonH_nearest_neighbors[free_nonH_neighbors+1:]
-
-def prepare_substrate(smile_string, calculator_params):
+def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, multi_process_sp=1, symmetry_charge_thresh=0.001):
     """Prepare the substrate for further use
     get_conformers() generates a list of confs using ETKDG implemented in RDKIT. Depending on the number of
     rotatable bonds, this procedure can create as many as 300 conformations (all satisfying the RMSD pruning criteria
@@ -77,17 +35,101 @@ def prepare_substrate(smile_string, calculator_params):
 
     """
     # Generate sorted low-energy conformations using ETKDG and MMFF94
-    substrate_confs = get_conformers(smile_string)
+    substrate_confs = get_conformers(smile_string, n_cpu=multi_process_conf)
     substrate = substrate_confs.pop(0) # Lowest energy conf
 
-    # Relax at the tight-binding level with xTB and determine zero-point energy (parallel single_point calcs)
-    substrate = single_run(substrate, runtype='opt vtight', **calculator_params, parallel=4)
-    substrate = single_run(substrate, runtype='hess', **calculator_params, parallel=4)
+    # Relax at the tight-binding level with xTB.
+    # Then determine zero-point energy and request a charge population analysis for 2D graph symmetry checking.
+    substrate = single_run(substrate, runtype='opt vtight', **calculator_params, parallel=multi_process_sp)
+    substrate = single_run(substrate, runtype='hess', **calculator_params, **{'pop':''}, parallel=multi_process_sp)
+    qs = substrate.info['qs']  # charges
+    del substrate.info['qs']
 
     # Attach useful information to the substrate object
     total_num_nonHs = len(substrate) - substrate.get_chemical_symbols().count('H')  # number of non-hydrogen atoms
+    eqv_atoms_grp = equivalent_atoms_grouped(smile_string)
+
+    substrate.info['equivalent_atoms_grouped'] = eqv_atoms_grp
+    substrate.info['equivalent_atoms'] = equivalent_atoms(eqv_atoms_grp, qs, symmetry_charge_thresh=symmetry_charge_thresh)
     substrate.info['calc_params'] = deepcopy(calculator_params)
     substrate.info['bonds'] = get_neighboring_bonds_list(substrate)
     substrate.info['nonH_count'] = int(total_num_nonHs)
 
     return substrate, substrate_confs
+
+def equivalent_atoms(eqv_atoms_grouped, charges, symmetry_charge_thresh=0.001):
+    # Check for molecular graph symmetry and return a list of equivalent, non-H atoms
+    # 2 atoms that are equivalent according to the 2D graph symmetry of the substrate, are not necessarily
+    # equivalent in the 3D case... each atom will experience a unique electronic environment in 3D!
+    # But the 2D graph equivalent atoms affer an excellent approximation (2D equivalent atoms usually are differing ~0.05 eV
+    # in energy from the 3D case, and often times much smaller differences are encountered)
+    # The situation where this approximation appears to break down, is when the 3D electronic environments, given
+    # say by the partial charges on each atom, are very different from one another (on the order of 0.001 Coloumb)...
+    # then you need to consider each atom individually in this case.
+
+    charges_grouped = [[charges[i] for i in symgroup] for symgroup in eqv_atoms_grouped]
+    max_q_difference = [max(q) - min(q) for q in charges_grouped]
+
+    eqv_atoms = []
+    for e, q in zip(eqv_atoms_grouped, max_q_difference):
+        if q < symmetry_charge_thresh:
+            # Equiv by symmetry and electronic env. Return any index (in this case 0)
+            eqv_atoms.append(e[0])
+        else:
+            print('###################################')
+            print('Inequivalent atoms by charge. Debug')
+            # Equiv by symmetry, but not by electronic env. Return all indices
+            eqv_atoms.append(*e)
+
+    return eqv_atoms
+
+def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
+    """Build a list of rudimentary adsorbate/substrate configurations on a proposed active site"""
+    a, s = adsorbate.copy(), substrate.copy()
+
+    # Proposed active site position and indices of neighboring bonded atoms
+    # where len(b) is the bond order of atom
+    p = s[site].position
+    b = s.info['bonds'][site]
+    config_list = []
+
+    if (s[site].symbol == 'N') and (len(b) == 3):
+        # Ignore Tertiary Nitrogens... specifically the Hbonded N's need to not be considered....
+        return config_list
+    # Alkane carbon (4) or Carbonyl Oxygen (1), likely not active sites... skip
+    # 1. Create a configuration where adsorbate is on-top of site (perpendicular to plane formed by its neighbors)
+    # 2. Create an additional heteroatom configuration, by maximizing distance of adsorb. relative to neighbors
+    if (len(b) != 4) & (len(b) != 1):
+
+        # Determine vector 'n' that defines a plane between active site and 2 neighboring atoms
+        diff = s[b].positions - p
+        cross = np.cross(diff[0], diff[1])
+        n = cross / np.linalg.norm(cross)
+
+        # Rotate vector definining O-H or O-O bond into normal vector 'n'
+        if len(a) > 1:
+            a.rotate(a[1].position, n)
+
+        # Translate adsorbate a height 'f' above position of active site
+        a.translate(p + n * f)
+
+        # Form composite system
+        s.info.clear() #else, you attach s.info to composites and thats unnecessary baggage during computations
+        composite = s + a
+        config_list.append(composite)
+
+        if s[site].symbol in ['O', 'N', 'S']:
+            a_opt = adsorbate.copy()
+            other_positions = np.delete(s.positions, site, axis=0)  # Remove active site iteslf from position array
+            optimized_adsorb_position = find_constrained_optimal_position(p, other_positions, distance_constraint=f)
+            n_orient = optimized_adsorb_position - p
+
+            if len(a_opt) > 1:
+                a_opt.rotate(a_opt[1].position, n_orient)
+
+            a_opt.translate(optimized_adsorb_position)
+
+            composite_opt = s + a_opt
+            config_list.append(composite_opt)
+
+    return config_list

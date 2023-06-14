@@ -11,7 +11,8 @@ import multiprocessing
 
 import ase
 from osc_discovery.photocatalysis.thermodynamics.constants import dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR
-from osc_discovery.photocatalysis.thermodynamics.helpers import parse_stdoutput
+from osc_discovery.photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges
+from osc_discovery.photocatalysis.thermodynamics.helpers import xtboptlog_to_ase_trajectory
 
 def get_logger():
     logger_ = logging.getLogger()
@@ -58,14 +59,13 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
 
     # Build command
     mol.write('scratch.xyz')
-    cmd = f'xtb scratch.xyz --{runtype} --strict'
+    cmd = f'xtb scratch.xyz --{runtype}'
     for key, value in calculator_kwargs.items():
         cmd += f" --{key} {value}"
 
     # Execute command
     process_output = subprocess.run((cmd), shell=True, capture_output=True)
     stdoutput = process_output.stdout.decode('UTF-8')
-
     ################# Error Handling #################
     if process_output.returncode != 0:
         error_logger.error(f'Runtime Errors Encountered in job {job_number}, attempting to solve')
@@ -116,12 +116,16 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
         mol.info = deepcopy(molecule.info)
 
     out_dict = parse_stdoutput(stdoutput, runtype)
+    if 'pop' in calculator_kwargs:
+        out_dict.update({'qs' : parse_charges()}) # Request a Mulliken population analysis charges
     mol.info.update(out_dict)
 
-    os.chdir('..')
     if keep_folder:
         mol.info['fname'] = os.path.join(os.getcwd(), fname)
+        xtboptlog_to_ase_trajectory('xtbopt.log', f'opt{job_number}.traj')
+        os.chdir('..')
     else:
+        os.chdir('..')
         shutil.rmtree(fname)
 
     return mol

@@ -3,14 +3,13 @@ from copy import deepcopy
 import os
 from ase.geometry.analysis import Analysis
 
-from osc_discovery.photocatalysis.adsorption.tools import pairwise, get_neighboring_bonds_list
+from osc_discovery.photocatalysis.adsorption.helpers import pairwise, get_neighboring_bonds_list
 from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH, HOOKEAN_OH, HOOKEAN_OOH_A, HOOKEAN_OOH_B
-from osc_discovery.photocatalysis.adsorption.building import build_configuration_from_site
+from osc_discovery.photocatalysis.adsorption.tools import build_configuration_from_site
 from osc_discovery.photocatalysis.thermodynamics.tools import multi_run, get_logger
 from osc_discovery.photocatalysis.thermodynamics.helpers import create_trajectories_from_logs
 
-def relax_all_adsorbate_configurations(substrate, h=1.4, optlevel='normal', keep_folders=False, multi_process=6):
-    calc_params = substrate.info['calc_params'].copy()
+def relax_all_adsorbate_configurations(substrate, calc_params, h=1.4, optlevel='normal', keep_folders=False, multi_process=6):
     relax_logger = get_logger()
 
     ################ 1. OH relaxation ################
@@ -224,21 +223,22 @@ def check_site_identity_volatilization(composite_relaxed, substrate, volatilizat
 
 def filter_configurations(configurations, substrate):
     ### Perform fidelity checks on a list of configurations, attach active site info, and filter for checks and duplicate sites
-    d = dict()
+    config_dict = dict()
 
     for config in configurations:
-        actv, checks = check_site_identity_volatilization(config, substrate)
-
+        active_sites, checks = check_site_identity_volatilization(config, substrate)
         if checks:
-            for a in actv:
-                if a in d:
-                    if config.info['energy'] < d[a].info['energy']:
-                        d[a] = config
-                else:
-                    d[a] = config
+            for site in active_sites:
+                if site not in config_dict:
+                    # New site, add config to dict
+                    config_dict[site] = config
+
+                elif config.info['energy'] < config_dict[site].info['energy']:
+                    # Replace config with lower energy one at a given site
+                    config_dict[site] = config
 
     filtered_configs = []
-    for k, config in d.items():
+    for k, config in config_dict.items():
         config = deepcopy(config)
         config.info['active_site'] = k
         filtered_configs.append(config)
