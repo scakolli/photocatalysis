@@ -2,6 +2,7 @@ import numpy as np
 from copy import deepcopy
 import os
 from ase.geometry.analysis import Analysis
+import itertools
 
 from osc_discovery.photocatalysis.adsorption.helpers import pairwise, get_neighboring_bonds_list
 from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH, HOOKEAN_OH, HOOKEAN_OOH_A, HOOKEAN_OOH_B
@@ -57,8 +58,8 @@ def relax_all_adsorbate_configurations(substrate, calc_params, h=1.4, optlevel='
                               calc_kwargs=calc_params, multi_process=multi_process)
     configsOOH_filtered = filter_configurations(configsOOH_relaxed, substrate)
 
+    os.chdir('..')
     if keep_folders:
-        os.chdir('..')
         create_trajectories_from_logs(os.getcwd()) # create .traj files in dirs
 
     return configsOH_filtered, configsO_filtered, configsOOH_filtered
@@ -225,20 +226,86 @@ def filter_configurations(configurations, substrate):
     ### Perform fidelity checks on a list of configurations, attach active site info, and filter for checks and duplicate sites
     config_dict = dict()
 
-    for config in configurations:
-        active_sites, checks = check_site_identity_volatilization(config, substrate)
+    for j, config in enumerate(configurations):
+        sites, checks = check_site_identity_volatilization(config, substrate)
         if checks:
-            for site in active_sites:
-                if site not in config_dict:
+            if len(sites) == 2:
+                if repr(sites) not in config_dict:
                     # New site, add config to dict
-                    config_dict[site] = config
+                    config_dict[repr(sites)] = config
 
-                elif config.info['energy'] < config_dict[site].info['energy']:
+                else:
+                    if config.info['energy'] < config_dict[repr(sites)].info['energy']:
+                        # Replace config with lower energy one at a given site
+                        config_dict[repr(sites)] = config
+            elif len(sites) == 1:
+                if sites[0] not in config_dict:
+                    # New site, add config to dict
+                    config_dict[sites[0]] = config
+
+                elif config.info['energy'] < config_dict[sites[0]].info['energy']:
                     # Replace config with lower energy one at a given site
-                    config_dict[site] = config
+                    config_dict[sites[0]] = config
+        else:
+            continue
 
     filtered_configs = []
     for k, config in config_dict.items():
+        config = deepcopy(config)
+        config.info['active_site'] = k
+        filtered_configs.append(config)
+
+    return filtered_configs
+
+def filter_configurations_with_symm(configurations, substrate):
+    d = dict()
+
+    for config in configurations:
+        actv, checks = check_site_identity_volatilization(config, substrate)
+        eqv_atoms_grouped = deepcopy(substrate.info['equivalent_atoms_grouped'])
+
+        if checks:
+            # Config has not been destroyed/volitalized
+            if len(actv) == 2:
+                # Remove symmetry duplicate configs
+                a0, a1 = actv[0], actv[1]
+                a0_equivalents = [symgroup for symgroup in eqv_atoms_grouped if a0 in symgroup][0]
+                a1_equivalents = [symgroup for symgroup in eqv_atoms_grouped if a1 in symgroup][0]
+                equivalent_active_sites = [sorted(sites) for sites in itertools.product(a0_equivalents, a1_equivalents)]
+                equivalent_active_sites.remove(actv) #important
+
+                sites_in_dict = [equivalent for equivalent in equivalent_active_sites if repr(equivalent) in d]
+
+                if not len(sites_in_dict):
+                    # No symmetry equivalent active sites present in dict...
+                    # Remove duplicate configs, keeping lowest energy one
+                    if repr(actv) not in d:
+                        d[repr(actv)] = config
+                    elif d[repr(actv)].info['energy'] < config.info['energy']:
+                        d[repr(actv)] = config
+                else:
+                    # Equivalent sites present... do not add config
+                    pass
+
+            elif len(actv) == 1:
+                a = actv[0]
+                equivalent_active_sites = [symgroup for symgroup in eqv_atoms_grouped if a in symgroup][0]
+                sites_in_dict = [equivalent for equivalent in equivalent_active_sites if equivalent in d]
+
+                if not len(sites_in_dict):
+                    #print('symmetry passed')
+                    if a not in d:
+                        d[a] = config
+                    elif d[a].info['energy'] < config.info['energy']:
+                        #print('energy updated', a, d[a].info['energy'], config.info['energy'])
+                        d[a] = config
+                else:
+                    pass
+                ## if len(actv) == 0:
+                    # Volatialized... but on initial relaxation, adsorbate could briefly volatalize before coming back?
+
+    filtered_configs = []
+    for k, config in d.items():
         config = deepcopy(config)
         config.info['active_site'] = k
         filtered_configs.append(config)

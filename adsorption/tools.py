@@ -7,6 +7,11 @@ from osc_discovery.photocatalysis.thermodynamics.tools import single_run
 
 from osc_discovery.photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped
 from osc_discovery.photocatalysis.adsorption.helpers import find_constrained_optimal_position
+from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH
+
+from osc_discovery.photocatalysis.adsorption.helpers import ase2rdkit_valencies
+from osc_discovery.cheminformatics.cheminformatics_misc import rdkit2ase
+from rdkit.Chem import AllChem
 
 
 def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, multi_process_sp=1, symmetry_charge_thresh=0.001):
@@ -43,17 +48,17 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
     substrate = single_run(substrate, runtype='opt vtight', **calculator_params, parallel=multi_process_sp)
     substrate = single_run(substrate, runtype='hess', **calculator_params, **{'pop':''}, parallel=multi_process_sp)
     qs = substrate.info['qs']  # charges
-    del substrate.info['qs']
 
     # Attach useful information to the substrate object
-    total_num_nonHs = len(substrate) - substrate.get_chemical_symbols().count('H')  # number of non-hydrogen atoms
+    # total_num_nonHs = len(substrate) - substrate.get_chemical_symbols().count('H')  # number of non-hydrogen atoms
+    nonH_atoms = [atom.index for atom in substrate if atom.symbol != 'H']
     eqv_atoms_grp = equivalent_atoms_grouped(smile_string)
 
     substrate.info['equivalent_atoms_grouped'] = eqv_atoms_grp
     substrate.info['equivalent_atoms'] = equivalent_atoms(eqv_atoms_grp, qs, symmetry_charge_thresh=symmetry_charge_thresh)
     substrate.info['calc_params'] = deepcopy(calculator_params)
     substrate.info['bonds'] = get_neighboring_bonds_list(substrate)
-    substrate.info['nonH_count'] = int(total_num_nonHs)
+    substrate.info['nonH_atoms'] = nonH_atoms
 
     return substrate, substrate_confs
 
@@ -77,9 +82,9 @@ def equivalent_atoms(eqv_atoms_grouped, charges, symmetry_charge_thresh=0.001):
             eqv_atoms.append(e[0])
         else:
             print('###################################')
-            print('Inequivalent atoms by charge. Debug')
+            assert q < symmetry_charge_thresh, "Inequivalent atoms by charge. Debug"
             # Equiv by symmetry, but not by electronic env. Return all indices
-            eqv_atoms.append(*e)
+            eqv_atoms += [*e]
 
     return eqv_atoms
 
@@ -133,3 +138,26 @@ def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
             config_list.append(composite_opt)
 
     return config_list
+
+def build_configurations(substrate, height=1.4, key='nonH_atoms'):
+    configsOH, configsO, configsOOH = [], [], []
+    for site in substrate.info[key]:
+        configsOH += build_configuration_from_site(OH, substrate, site, f=height)
+        configsO += build_configuration_from_site(O, substrate, site, f=height)
+        configsOOH += build_configuration_from_site(OOH, substrate, site, f=height)
+
+    return configsOH, configsO, configsOOH
+
+def get_adsorbate_conformers(molecule, numConfs=10, numThreads=4, return_all=False):
+    molecule_copy = deepcopy(molecule)
+    mol = ase2rdkit_valencies(molecule_copy)
+    AllChem.EmbedMultipleConfs(mol, numConfs=numConfs, numThreads=numThreads)
+    ff_opt_energies = AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=numThreads)
+
+    conformers = [rdkit2ase(mol, confId=j) for j in range(mol.GetNumConformers())]
+    conformers_sorted = [c for _, c in sorted(zip(ff_opt_energies, conformers), key=lambda x: x[0][1])]
+
+    if return_all:
+        return conformers_sorted
+    else:
+        return conformers_sorted[0]

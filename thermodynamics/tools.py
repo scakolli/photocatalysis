@@ -121,7 +121,7 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
     mol.info.update(out_dict)
 
     if keep_folder:
-        mol.info['fname'] = os.path.join(os.getcwd(), fname)
+        mol.info['fname'] = os.path.join(os.getcwd())
         xtboptlog_to_ase_trajectory('xtbopt.log', f'opt{job_number}.traj')
         os.chdir('..')
     else:
