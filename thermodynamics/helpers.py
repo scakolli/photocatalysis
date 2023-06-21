@@ -1,12 +1,18 @@
+import numpy as np
 from ase.units import Hartree, Bohr
 from ase.io import read, Trajectory
 from glob import glob
+from itertools import takewhile, dropwhile
+import logging
+
 
 def parse_energies(string):
+    energy_parsed = False
     for line in string.splitlines():
-        if 'TOTAL' in line:
+        if 'TOTAL' in line and not energy_parsed:
             # Total Energy in eV
             e = float(line.split()[-3]) * Hartree
+            energy_parsed = True
     return e
 
 def parse_ipea_homolumo(string):
@@ -63,8 +69,10 @@ def parse_charges():
 
 def parse_fukui_indices(string):
     # Parse fukui indices for each atom
-    fukui_printout_start = dropwhile(lambda line: "#        f(+)     f(-)     f(0)" not in line, string.splitlines())
-    fki = [float(l.split()[-1]) for l in list(takewhile(lambda line: "-----" not in line, od))[1:]]
+    assert 1 > 2, "Debug Fukui parsing"
+    lines = string.splitlines()
+    fukui_printout_start = dropwhile(lambda line: "#        f(+)     f(-)     f(0)" not in line, lines)
+    fki = [float(l.split()[-1]) for l in list(takewhile(lambda line: "-----" not in line, lines))[1:]]
     return fki
 
 def parse_stdoutput(xtb_output, runtype):
@@ -74,7 +82,9 @@ def parse_stdoutput(xtb_output, runtype):
         d['energy'] = parse_energies(xtb_output)
     elif runtype == 'hess':
         d['zpe'], d['enthalpy'], d['entropy'], d['free_energy'] = parse_hess(xtb_output)
-        # Thermo parsing
+    elif 'ohess' in runtype:
+        d['energy'] = parse_energies(xtb_output)
+        d['zpe'], d['enthalpy'], d['entropy'], d['free_energy'] = parse_hess(xtb_output)
     elif runtype == 'vipea':
         d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea_homolumo(xtb_output)
     elif runtype == 'vfukui':
@@ -101,3 +111,19 @@ def create_trajectories_from_logs(path):
     for i, p in zip(parsing_indices, path_of_optlogs):
         traj_path = p[:i[0]] + 'opt' +  i[1] + '.traj'
         xtboptlog_to_ase_trajectory(p, traj_path)
+
+def get_logger():
+    logger_ = logging.getLogger()
+    logger_.setLevel(logging.INFO)
+    if not logger_.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s: %(message)s'))
+        logger_.addHandler(console_handler)
+    return logger_
+
+def explicitly_broadcast_to(shape, *gs_expres):
+    # Fillout arrays
+    out = []
+    for g in gs_expres:
+        out.append(np.broadcast_to(g, shape))
+    return tuple(out)

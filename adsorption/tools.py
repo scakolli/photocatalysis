@@ -5,7 +5,7 @@ from rdkit import Chem
 from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
 from osc_discovery.photocatalysis.thermodynamics.tools import single_run
 
-from osc_discovery.photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped
+from osc_discovery.photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped, equivalent_atoms
 from osc_discovery.photocatalysis.adsorption.helpers import find_constrained_optimal_position
 from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH
 
@@ -13,8 +13,7 @@ from osc_discovery.photocatalysis.adsorption.helpers import ase2rdkit_valencies
 from osc_discovery.cheminformatics.cheminformatics_misc import rdkit2ase
 from rdkit.Chem import AllChem
 
-
-def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, multi_process_sp=1, symmetry_charge_thresh=0.001):
+def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, multi_process_sp=1, symmetry_charge_thresh=0.001, return_all=False):
     """Prepare the substrate for further use
     get_conformers() generates a list of confs using ETKDG implemented in RDKIT. Depending on the number of
     rotatable bonds, this procedure can create as many as 300 conformations (all satisfying the RMSD pruning criteria
@@ -43,10 +42,10 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
     substrate_confs = get_conformers(smile_string, n_cpu=multi_process_conf)
     substrate = substrate_confs.pop(0) # Lowest energy conf
 
-    # Relax at the tight-binding level with xTB.
-    # Then determine zero-point energy and request a charge population analysis for 2D graph symmetry checking.
-    substrate = single_run(substrate, runtype='opt vtight', **calculator_params, parallel=multi_process_sp)
-    substrate = single_run(substrate, runtype='hess', **calculator_params, **{'pop':''}, parallel=multi_process_sp)
+    # Relax at the tight-binding level with xTB, determine zero-point energy and entropy contributions, calculate
+    # the ionization potential, and then request a charge population analysis for 2D symmetry checking purposes
+    substrate = single_run(substrate, runtype='ohess vtight', **calculator_params, parallel=multi_process_sp)
+    substrate = single_run(substrate, runtype='vipea', **calculator_params, pop='', parallel=multi_process_sp)
     qs = substrate.info['qs']  # charges
 
     # Attach useful information to the substrate object
@@ -58,35 +57,28 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
     substrate.info['equivalent_atoms'] = equivalent_atoms(eqv_atoms_grp, qs, symmetry_charge_thresh=symmetry_charge_thresh)
     substrate.info['calc_params'] = deepcopy(calculator_params)
     substrate.info['bonds'] = get_neighboring_bonds_list(substrate)
-    substrate.info['nonH_atoms'] = nonH_atoms
+    substrate.info['nonH_count'] = len(nonH_atoms)
+    del substrate.info['qs']
 
-    return substrate, substrate_confs
+    if return_all:
+        return substrate_confs
+    else:
+        return substrate
 
-def equivalent_atoms(eqv_atoms_grouped, charges, symmetry_charge_thresh=0.001):
-    # Check for molecular graph symmetry and return a list of equivalent, non-H atoms
-    # 2 atoms that are equivalent according to the 2D graph symmetry of the substrate, are not necessarily
-    # equivalent in the 3D case... each atom will experience a unique electronic environment in 3D!
-    # But the 2D graph equivalent atoms affer an excellent approximation (2D equivalent atoms usually are differing ~0.05 eV
-    # in energy from the 3D case, and often times much smaller differences are encountered)
-    # The situation where this approximation appears to break down, is when the 3D electronic environments, given
-    # say by the partial charges on each atom, are very different from one another (on the order of 0.001 Coloumb)...
-    # then you need to consider each atom individually in this case.
+def get_adsorbate_conformers(molecule, numConfs=10, numThreads=4, return_all=False):
+    ### Generate conformers using RDKIT and optimize them with a FF. Sorted by energy.
+    molecule_copy = deepcopy(molecule)
+    mol = ase2rdkit_valencies(molecule_copy)
+    AllChem.EmbedMultipleConfs(mol, numConfs=numConfs, numThreads=numThreads)
+    ff_opt_energies = AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=numThreads)
 
-    charges_grouped = [[charges[i] for i in symgroup] for symgroup in eqv_atoms_grouped]
-    max_q_difference = [max(q) - min(q) for q in charges_grouped]
+    conformers = [rdkit2ase(mol, confId=j) for j in range(mol.GetNumConformers())]
+    conformers_sorted = [c for _, c in sorted(zip(ff_opt_energies, conformers), key=lambda x: x[0][1])]
 
-    eqv_atoms = []
-    for e, q in zip(eqv_atoms_grouped, max_q_difference):
-        if q < symmetry_charge_thresh:
-            # Equiv by symmetry and electronic env. Return any index (in this case 0)
-            eqv_atoms.append(e[0])
-        else:
-            print('###################################')
-            assert q < symmetry_charge_thresh, "Inequivalent atoms by charge. Debug"
-            # Equiv by symmetry, but not by electronic env. Return all indices
-            eqv_atoms += [*e]
-
-    return eqv_atoms
+    if return_all:
+        return conformers_sorted
+    else:
+        return conformers_sorted[0]
 
 def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
     """Build a list of rudimentary adsorbate/substrate configurations on a proposed active site"""
@@ -139,25 +131,11 @@ def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
 
     return config_list
 
-def build_configurations(substrate, height=1.4, key='nonH_atoms'):
+def build_configurations(substrate, sites, height=1.4):
     configsOH, configsO, configsOOH = [], [], []
-    for site in substrate.info[key]:
+    for site in sites:
         configsOH += build_configuration_from_site(OH, substrate, site, f=height)
         configsO += build_configuration_from_site(O, substrate, site, f=height)
         configsOOH += build_configuration_from_site(OOH, substrate, site, f=height)
 
     return configsOH, configsO, configsOOH
-
-def get_adsorbate_conformers(molecule, numConfs=10, numThreads=4, return_all=False):
-    molecule_copy = deepcopy(molecule)
-    mol = ase2rdkit_valencies(molecule_copy)
-    AllChem.EmbedMultipleConfs(mol, numConfs=numConfs, numThreads=numThreads)
-    ff_opt_energies = AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=numThreads)
-
-    conformers = [rdkit2ase(mol, confId=j) for j in range(mol.GetNumConformers())]
-    conformers_sorted = [c for _, c in sorted(zip(ff_opt_energies, conformers), key=lambda x: x[0][1])]
-
-    if return_all:
-        return conformers_sorted
-    else:
-        return conformers_sorted[0]

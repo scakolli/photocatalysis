@@ -63,6 +63,34 @@ def equivalent_atoms_grouped(smile):
 
     return list(symmetries.values())
 
+def equivalent_atoms(eqv_atoms_grouped, charges, symmetry_charge_thresh=0.001):
+    # Check for molecular graph symmetry and return a list of equivalent, non-H atoms
+    # 2 atoms that are equivalent according to the 2D graph symmetry of the substrate, are not necessarily
+    # equivalent in the 3D case... each atom will experience a unique electronic environment in 3D!
+    # But the 2D graph equivalent atoms affer an excellent approximation (2D equivalent atoms usually are differing ~0.05 eV
+    # in energy from the 3D case, and often times much smaller differences are encountered)
+    # The situation where this approximation appears to break down, is when the 3D electronic environments, given
+    # say by the partial charges on each atom, are very different from one another (on the order of 0.001 Coloumb)...
+    # then you need to consider each atom individually in this case.
+
+    charges_grouped = [[charges[i] for i in symgroup] for symgroup in eqv_atoms_grouped]
+    max_q_difference = [max(q) - min(q) for q in charges_grouped]
+
+    eqv_atoms = []
+    for e, q in zip(eqv_atoms_grouped, max_q_difference):
+        if q < symmetry_charge_thresh:
+            # Equiv by symmetry and electronic env. Return any index (in this case 0)
+            eqv_atoms.append(e[0])
+        else:
+            # print('###################################')
+            # print('Inequivalent atoms detected based on charge threshold...')
+            # print(f'Adding {e}')
+            # assert q < symmetry_charge_thresh, "Inequivalent atoms by charge. Debug"
+            # Equiv by symmetry, but not by electronic env. Return all indices
+            eqv_atoms += [*e]
+
+    return eqv_atoms
+
 def dist_obj(point, points):
     # Closest neighbor distance (negative)
     return -np.linalg.norm(point - points, axis=1).min()

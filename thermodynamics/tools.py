@@ -1,27 +1,17 @@
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-import logging
 import subprocess
 from copy import deepcopy
 import shutil
-from itertools import dropwhile, takewhile, repeat
+from itertools import dropwhile, repeat
 import time
 import multiprocessing
 
 import ase
-from osc_discovery.photocatalysis.thermodynamics.constants import dG1_CORR, dG2_CORR, dG3_CORR, dG4_CORR
-from osc_discovery.photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges
+from osc_discovery.photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST, dG4_REST
+from osc_discovery.photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges, get_logger, explicitly_broadcast_to
 from osc_discovery.photocatalysis.thermodynamics.helpers import xtboptlog_to_ase_trajectory
-
-def get_logger():
-    logger_ = logging.getLogger()
-    logger_.setLevel(logging.INFO)
-    if not logger_.handlers:
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s: %(message)s'))
-        logger_.addHandler(console_handler)
-    return logger_
 
 def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calculator_kwargs):
     """
@@ -32,6 +22,7 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
     # sp : single-point scc calc
     # opt [LEVEL]: geometry optimization, e.g. 'opt vtight'
     # hess : vibrational and thermodynamic analysis
+    # ohess [LEVEL] : opt and hess together
     # vipea : vertical ionization potential and electron affinity (This needs the .param_ipea.xtb parameters and a GFN1 Hamiltonian)
     # vfukui : Fukui indices
 
@@ -110,7 +101,7 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
     ################# Error Handling Finished #################
 
     # Update molecule geometry, parse output for properties and attach info to molecule, clean up folders
-    if 'opt' in runtype:
+    if 'opt' in runtype or 'ohess' in runtype:
         mol = ase.io.read('xtbopt.xyz')
         del mol.info
         mol.info = deepcopy(molecule.info)
@@ -156,47 +147,46 @@ def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None
 
     return completed_molecule_list
 
-def calculate_free_energies(s, OH, O, OOH):
-    ### Calculate reaction free energies of *, *OH, *O, *OOH species
-    assert 'zpe' in OH.info, "No frequency analysis done yet"
-    Es, EOH, EO, EOOH = s.info['energy'], OH.info['energy'], O.info['energy'], OOH.info['energy']
-    ZPEs, ZPEOH, ZPEO, ZPEOOH = s.info['zpe'], OH.info['zpe'], O.info['zpe'], OOH.info['zpe']
-    TSs, TSOH, TSO, TSOOH = s.info['entropy'], OH.info['entropy'], O.info['entropy'], OOH.info['entropy']
+def free_energies(Gs, GOH, GO, GOOH):
+    # Given the free energies of each intermediate (could also just be the energies, if you want a non-zpe/ts approx.)
+    # determine the free energy changes of each step in the proposed reaction mechanism
+    dG1 = GOH - Gs + dG1_REST
+    dG2 = GO - GOH + dG2_REST
+    dG3 = GOOH - GO + dG3_REST
+    dG4 = Gs - GOOH + dG4_REST
 
-    dG1 = (EOH + ZPEOH - TSOH) - (Es + ZPEs - TSs) + dG1_CORR
-    dG2 = (EO + ZPEO - TSO) - (EOH + ZPEOH - TSOH) + dG2_CORR
-    dG3 = (EOOH + ZPEOOH - TSOOH) - (EO + ZPEO - TSO) + dG3_CORR
-    dG4 = (Es + ZPEs - TS) - (EOOH + ZPEOOH - TSOOH) + dG4_CORR
+    return np.array([dG1, dG2, dG3, dG4])
 
-    Gs = np.array((dG1, dG2, dG3, dG4))
+def free_energies_multidim(Gs, GOH, GO, GOOH, explicitly_broadcast=True):
+    # Vectorized free energy expressions with numpy broadcasting.
+    # (Gs) : scalar, (GOH, GO, GOOH) : arbitrary length numpy arrays corresponding to each configuration
+    # Access free energy expression of configs (3,5,6) / (OH_index, O_index, OOH_index) with for example
+    # G[3,5,6] -> [1.24,1.22,1.24,1.22]
 
-    return Gs
+    g1 = GOH[:, None, None] - Gs + dG1_REST
+    g2 = GO[None, :, None] - GOH[:, None, None] + dG2_REST
+    g3 = GOOH[None, None, :] - GO[None, :, None] + dG3_REST
+    g4 = Gs - GOOH[None, None, :] + dG4_REST
 
-def free_energies(Es, EOH, EO, EOOH, ZPE_TS=None):
-    ### Calculate reaction free energies of *, *OH, *O, *OOH species
+    if explicitly_broadcast:
+        tot_shape = len(GOH), len(GO), len(GOOH)
+        g1b, g2b, g3b, g4b = explicitly_broadcast_to(tot_shape, g1, g2, g3, g4)
+        G = np.moveaxis(np.array((g1b, g2b, g3b, g4b)), 0, 3)
+        return G
+    else:
+        return g1, g2, g3, g4
 
-    # if ZPE_TS is None:
+def free_energy_diagram(Gs_array):
+    # quick and dirty plotting of free energies
 
-
-    dG1 = (EOH + ZPEOH - TSOH) - (Es + ZPEs - TSs) + dG1_CORR
-    dG2 = (EO + ZPEO - TSO) - (EOH + ZPEOH - TSOH) + dG2_CORR
-    dG3 = (EOOH + ZPEOOH - TSOOH) - (EO + ZPEO - TSO) + dG3_CORR
-    dG4 = (Es + ZPEs - TS) - (EOOH + ZPEOOH - TSOOH) + dG4_CORR
-
-    Gs = np.array((dG1, dG2, dG3, dG4))
-
-    return Gs
-
-def free_energy_diagram(Gs):
-
-    x = [0, 1, 2, 3, 4]
+    x = [0, 1, 2, 3, 4] # steps
     y = [0]+Gs.cumsum().tolist() # No bias
-    y_123 = [0] + (Gs - 1.23).cumsum().tolist() # Equilibrium bias 1.23V
-    y_downhill = [0] + (Gs - Gs.max()).cumsum().tolist() # Bias when all steps are down hill
+    y_123 = [0] + (Gs_array - 1.23).cumsum().tolist() # Equilibrium bias 1.23V
+    y_downhill = [0] + (Gs_array - Gs_array.max()).cumsum().tolist() # Bias when all steps are down hill
 
     plt.step(x, y, 'k', label='0V')
     plt.step(x, y_123, '--k', label='1.23V')
-    plt.step(x, y_downhill, 'b', label='{}V'.format(round(Gs.max(), 2)))
+    plt.step(x, y_downhill, 'b', label='{}V'.format(round(Gs_array.max(), 2)))
 
     plt.xlabel('Intermediates')
     plt.ylabel('Free Energy (eV)')
