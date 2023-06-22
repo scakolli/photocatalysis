@@ -3,13 +3,13 @@ from copy import deepcopy
 
 from rdkit import Chem
 from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
-from osc_discovery.photocatalysis.thermodynamics.tools import single_run
+from photocatalysis.thermodynamics.tools import single_run
 
-from osc_discovery.photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped, equivalent_atoms
-from osc_discovery.photocatalysis.adsorption.helpers import find_constrained_optimal_position
-from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH
+from photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped, equivalent_atoms
+from photocatalysis.adsorption.helpers import find_constrained_optimal_position
+from photocatalysis.adsorption.constants import OH, O, OOH
 
-from osc_discovery.photocatalysis.adsorption.helpers import ase2rdkit_valencies
+from photocatalysis.adsorption.helpers import ase2rdkit_valencies
 from osc_discovery.cheminformatics.cheminformatics_misc import rdkit2ase
 from rdkit.Chem import AllChem
 

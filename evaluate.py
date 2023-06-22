@@ -2,11 +2,11 @@ import numpy as np
 from copy import deepcopy
 import time
 
-from osc_discovery.photocatalysis.adsorption.tools import prepare_substrate
-from osc_discovery.photocatalysis.adsorption.relaxing import build_and_relax_configurations
-from osc_discovery.photocatalysis.thermodynamics.tools import multi_run, free_energies
-from osc_discovery.photocatalysis.thermodynamics.constants import SHE_VACUUM_POTENTIAL, WATER_OXIDATION_POTENTIAL
-from osc_discovery.photocatalysis.thermodynamics.helpers import get_logger
+from photocatalysis.adsorption.tools import prepare_substrate
+from photocatalysis.adsorption.relaxing import build_and_relax_configurations
+from photocatalysis.thermodynamics.tools import multi_run, free_energies
+from photocatalysis.thermodynamics.constants import SHE_VACUUM_POTENTIAL, WATER_OXIDATION_POTENTIAL
+from photocatalysis.thermodynamics.helpers import get_logger
 
 
 def evaluate_substrate(smile_string, calculator_params):

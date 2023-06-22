@@ -9,9 +9,9 @@ import time
 import multiprocessing
 
 import ase
-from osc_discovery.photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST, dG4_REST
-from osc_discovery.photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges, get_logger, explicitly_broadcast_to
-from osc_discovery.photocatalysis.thermodynamics.helpers import xtboptlog_to_ase_trajectory
+from photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST, dG4_REST
+from photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges, get_logger, explicitly_broadcast_to
+from photocatalysis.thermodynamics.helpers import xtboptlog_to_ase_trajectory
 
 def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calculator_kwargs):
     """

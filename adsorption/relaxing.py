@@ -4,11 +4,11 @@ import os
 from ase.geometry.analysis import Analysis
 import itertools
 
-from osc_discovery.photocatalysis.adsorption.helpers import pairwise, get_neighboring_bonds_list
-from osc_discovery.photocatalysis.adsorption.constants import OH, O, OOH
-from osc_discovery.photocatalysis.adsorption.tools import build_configurations
-from osc_discovery.photocatalysis.thermodynamics.tools import multi_run
-from osc_discovery.photocatalysis.thermodynamics.helpers import create_trajectories_from_logs
+from photocatalysis.adsorption.helpers import pairwise, get_neighboring_bonds_list
+from photocatalysis.adsorption.constants import OH, O, OOH
+from photocatalysis.adsorption.tools import build_configurations
+from photocatalysis.thermodynamics.tools import multi_run
+from photocatalysis.thermodynamics.helpers import create_trajectories_from_logs
 
 def build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=6, additional_conformers=False):
     ### Build Configs
