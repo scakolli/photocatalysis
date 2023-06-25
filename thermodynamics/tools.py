@@ -57,7 +57,8 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
     # Execute command
     process_output = subprocess.run((cmd), shell=True, capture_output=True)
     stdoutput = process_output.stdout.decode('UTF-8')
-    ################# Error Handling #################
+
+    ################# Error Handling ###########################
     if process_output.returncode != 0:
         error_logger.error(f'Runtime Errors Encountered in job {job_number}, attempting to solve')
         # Abnormal termination of xtb, errors are encapsulated by '###'
