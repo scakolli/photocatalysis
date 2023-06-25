@@ -190,7 +190,7 @@ def free_energy_diagram(Gs_array):
     # quick and dirty plotting of free energies
 
     x = [0, 1, 2, 3, 4] # steps
-    y = [0]+Gs.cumsum().tolist() # No bias
+    y = [0]+Gs_array.cumsum().tolist() # No bias
     y_123 = [0] + (Gs_array - 1.23).cumsum().tolist() # Equilibrium bias 1.23V
     y_downhill = [0] + (Gs_array - Gs_array.max()).cumsum().tolist() # Bias when all steps are down hill
 
