@@ -13,6 +13,8 @@ from photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST
 from photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges, get_logger, explicitly_broadcast_to
 from photocatalysis.thermodynamics.helpers import xtboptlog_to_ase_trajectory
 
+MAX_MULTI_PROCESS = 42 # Maximum number of cores allowable for multiprocessing
+
 def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calculator_kwargs):
     """
     Execute XTB calculations on molecule
@@ -129,7 +131,7 @@ def single_run_worker(job):
     mol, runt, keepf, calc_kwargs = job_input
     return single_run(mol, runtype=runt, keep_folder=keepf, job_number=job_num, **calc_kwargs)
 
-def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=1):
+def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=-1):
     # Generate (job_number, (single_run_parameters)) jobs to send to worker
     jobs = list(enumerate(zip(molecule_list, repeat(runtype), repeat(keep_folders), repeat(calc_kwargs))))
 
@@ -141,6 +143,13 @@ def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None
         completed_molecule_list = list(map(single_run_worker, jobs))
     else:
         # Parallel Relaxation
+        if multi_process == -1:
+            # Use maximum avaliable cores
+            if len(molecule_list) < MAX_MULTI_PROCESS:
+                multi_process = len(molecule_list)
+            else:
+                multi_process = MAX_MULTI_PROCESS
+
         with multiprocessing.Pool(multi_process) as pool:
             completed_molecule_list = pool.map(single_run_worker, jobs)
 

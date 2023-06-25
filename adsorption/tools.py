@@ -93,6 +93,7 @@ def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
     if (s[site].symbol == 'N') and (len(b) == 3):
         # Ignore Tertiary Nitrogens... specifically the Hbonded N's need to not be considered....
         return config_list
+    
     # Alkane carbon (4) or Carbonyl Oxygen (1), likely not active sites... skip
     # 1. Create a configuration where adsorbate is on-top of site (perpendicular to plane formed by its neighbors)
     # 2. Create an additional heteroatom configuration, by maximizing distance of adsorb. relative to neighbors

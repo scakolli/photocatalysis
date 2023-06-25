@@ -5,7 +5,7 @@ import time
 from photocatalysis.adsorption.tools import prepare_substrate
 from photocatalysis.adsorption.relaxing import build_and_relax_configurations
 from photocatalysis.thermodynamics.tools import multi_run, free_energies
-from photocatalysis.thermodynamics.constants import SHE_VACUUM_POTENTIAL, WATER_OXIDATION_POTENTIAL
+from photocatalysis.thermodynamics.constants import SHE_VACUUM_POTENTIAL
 from photocatalysis.thermodynamics.helpers import get_logger
 
 
@@ -16,13 +16,13 @@ def evaluate_substrate(smile_string, calculator_params):
 
     ### Prepare substrate
     # Generate FF optimized confs, optimize lowest energy one at the tight binding level, calculate ZPE-TS and IP/EA
-    substrate = prepare_substrate(smile_string, calculator_params, multi_process_conf=2, multi_process_sp=4)
+    substrate = prepare_substrate(smile_string, calculator_params, multi_process_conf=4, multi_process_sp=4)
     sites = substrate.info['equivalent_atoms']
 
     ### Relax and filter
     # Crude relaxation is sufficient
     eval_logger.info('Building and relaxing configurations')
-    oh_configs, o_configs, ooh_configs = build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=6, additional_conformers=False)
+    oh_configs, o_configs, ooh_configs = build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=-1, additional_conformers=False)
 
     ### Rate determining free energy and other quantities
     eval_logger.info('Calculating thermochemical properties')
@@ -40,6 +40,7 @@ def evaluate_substrate(smile_string, calculator_params):
 
 def calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs):
     calculator_params = deepcopy(substrate.info['calc_params'])
+    calculator_params.update({'parallel':4}) # Only 3 intermediates are analyzed here... use additional cores for each intermediate (4 gives best walltimes)
 
     ### Determine most stable set of intermediates, and completely optimize them (and perform ZPE/TS calc)
     Eoh = np.array([config.info['energy'] for config in oh_configs])
@@ -48,7 +49,6 @@ def calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs):
 
     min_energy_configs = [oh_configs[Eoh.argmin()], o_configs[Eo.argmin()], ooh_configs[Eooh.argmin()]]
     oh_stable, o_stable, ooh_stable = multi_run(min_energy_configs, runtype='ohess vtight', calc_kwargs=calculator_params, multi_process=3)
-
     ### Free energies of intermediates
     gs = substrate.info['energy'] +  substrate.info['zpe'] - substrate.info['entropy']
     goh = oh_stable.info['energy'] + oh_stable.info['zpe'] - oh_stable.info['entropy']
