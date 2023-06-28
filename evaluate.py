@@ -1,6 +1,7 @@
 import numpy as np
 from copy import deepcopy
 import time
+import os
 
 from photocatalysis.adsorption.tools import prepare_substrate
 from photocatalysis.adsorption.relaxing import build_and_relax_configurations
@@ -9,7 +10,11 @@ from photocatalysis.thermodynamics.constants import SHE_VACUUM_POTENTIAL
 from photocatalysis.thermodynamics.helpers import get_logger
 
 
-def evaluate_substrate(smile_string, calculator_params):
+def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
+    if scratch_dir is not None:
+        base = os.getcwd()
+        os.chdir(scratch_dir)
+
     eval_logger = get_logger()
     eval_logger.info('Preparing substrate')
     start = time.perf_counter()
@@ -35,6 +40,10 @@ def evaluate_substrate(smile_string, calculator_params):
 
     eval_logger.info(f'Evaluation Took {time.perf_counter() - start}s')
     print('#######################')
+
+    if scratch_dir is not None:
+        os.chdir(base)
+
     return driving_potential, rdg, essi, asites, rds
 
 

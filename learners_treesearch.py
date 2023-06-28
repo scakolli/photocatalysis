@@ -25,7 +25,7 @@ from photocatalysis.acquisition_function import F_acqusition
 from photocatalysis.gpr_model import GPR_tanimoto, _run_gpr_fit_bayesian_opt
 from photocatalysis import visualization_helpers
 
-print(operations_typical_osc_design.keys())
+# print(operations_typical_osc_design.keys())
 
 """ These classes implement the execution of the whole workflow on an HPC system or locally. 
 
@@ -183,8 +183,8 @@ class base_learner():
 
         # setting up the folder, linking in workers
         # os.system('ln -s $PWD/../../worker_package/* .')
+        # os.system(f'ln -s  /home/btpq/bt308495/Thesis/worker/* .')
         print('Now running in {}'.format(os.getcwd()))
-        os.mkdir('grafics')
 
         # create dir on scratch for distance matrix, used by gpr model
         if os.path.isdir(self.dir_scratch): 
@@ -206,7 +206,8 @@ class base_learner():
                 df_reference_chemical_space[p]=linear_correct_to_b3lyp(p, df_reference_chemical_space[p])
             
             # Add utility function
-            y = [df_reference_chemical_space[prop].tolist() for prop in self.properties]
+            # y = [df_reference_chemical_space[prop].tolist() for prop in self.properties]
+            y = df_reference_chemical_space[self.properties].values.T
             df_reference_chemical_space[self.utility_function_name] = self._get_utility(y)
             df_reference_chemical_space['generation'] = [ int(x) for x in df_reference_chemical_space.generation.tolist() ]
             
@@ -226,7 +227,8 @@ class base_learner():
         self.df_population_unique['finished_in_round'] = self.df_population_unique['added_in_round']
         self.df_population_unique.to_json('df_initial.json', orient='split')
        
-        y = [self.df_population_unique[prop].tolist() for prop in self.properties]
+        # y = [self.df_population_unique[prop].tolist() for prop in self.properties]
+        y = self.df_population_unique[self.properties].values.T
         self.df_population_unique[self.utility_function_name] = self._get_utility(y)
         self.df_population_unique.to_json('df_population.json', orient='split')        
         
@@ -289,8 +291,8 @@ class base_learner():
                 for j,row2 in df_sel.iterrows():
                     self.df_population_unique.at[j,'calc_status']='setup'                    
         
-        if run_count>0 and not self.check_all_calculations_finished(): 
-            self._submit_workers_to_cluster()
+        if run_count>0 and not self.check_all_calculations_finished():
+            self._submit_worker()
 
 
     def _read_res_file(self):
@@ -302,9 +304,8 @@ class base_learner():
         with open('molecules_to_calculate_results/results_calculations.txt') as out:
             for line in out.readlines():
                 line=line.split()
-                molname=line[0]
-                smi=line[1]
-                props=[float(x) for x in line[2:]]
+                smi=line[0]
+                props=[float(x) for x in line[1:]]
                 dict_res[smi]=props
         return dict_res
 
@@ -358,7 +359,8 @@ class base_learner():
         print('Completed after',self.df_population_unique[self.df_population_unique.calc_status!='completed'].shape)
                 
         # compute utility
-        y = [self.df_population_unique[prop].tolist() for prop in self.properties]
+        # y = [self.df_population_unique[prop].tolist() for prop in self.properties]
+        y = self.df_population_unique[self.properties].values.T
         self.df_population_unique[self.utility_function_name] = self._get_utility(y)
         
     
@@ -368,62 +370,71 @@ class base_learner():
         
         df_finished = self.get_population_completed_or_fizzled()
         df_population_unique = self._get_unique_population(self.df_population_unique)
-       
- 
-        if df_finished.shape[0]!=df_population_unique.shape[0]:
-            if not df_population_unique.shape[0]-df_finished.shape[0]<=(self.Nbatch_first - self.Nbatch_finish_successful):
+
+        if df_finished.shape[0] != df_population_unique.shape[0]:
+             # How many calculations can be left_todo, before proceeding... useful for HPC parallel processing across
+             # multiple nodes. If theres only 10 left do, better not leave all the compute nodes idle while we process
+             # these 10... lets already begin fetching the next batch. In our case, with 1 local compute node, this is not
+             # necessary.
+            threshold = self.Nbatch_first - self.Nbatch_finish_successful
+            left_todo = df_population_unique.shape[0]-df_finished.shape[0]
+
+            if left_todo > threshold:
                 if read: print(df_finished.shape, self.df_population_unique.shape)
                 if read: print('Need to run on {} systems'.format(df_population_unique.shape[0]-\
                                                      self._get_unique_population(df_finished).shape[0]))
                 if self.Nbatch_finish_successful!=-1:
-                    if read: print('Threshold value to proceed: {}'.format(self.Nbatch_first - self.Nbatch_finish_successful))
+                    if read: print('Threshold value to proceed: {}'.format(threshold))
                 return False
         
         print('Finished, saving frame to {}'.format(os.path.join(os.getcwd(), 'df_population.json')))
         if read: self.df_population_unique.to_json('df_population.json', orient='split')
         return True
 
+    def _submit_worker(self):
+        # Workers already linked in previously, simply call them from cwd .../learner_results/
+        os.system(f'python {self.worker_submit_file}')
     
-    def _submit_workers_to_cluster(self):
-        ''' This function checks, whether there are still enough workers running. 
-        If not, new workers are added to the queueing system.
-        So far PBS and SLURM are supported
-        '''
+    # def _submit_workers_to_cluster(self):
+    #     ''' This function checks, whether there are still enough workers running. 
+    #     If not, new workers are added to the queueing system.
+    #     So far PBS and SLURM are supported
+    #     '''
        
-        print('Worker settings: ')
-        print('Run mode', self.run_mode)
-        print(self.queue_status_command)
-        print(self.submit_command)
-        print(self.worker_submit_file)
+    #     print('Worker settings: ')
+    #     print('Run mode', self.run_mode)
+    #     print(self.queue_status_command)
+    #     print(self.submit_command)
+    #     print(self.worker_submit_file)
 
-        # Get qstat
-        if self.run_mode=='queue':
-            if ' ' in self.queue_status_command: list_command = self.queue_status_command.split()
-            else: list_command = [ self.queue_status_command ]
-            submit_command = [ self.submit_command, self.worker_submit_file ]
-        else:
-            list_command = ['ps','aux','|','grep', self.worker_submit_file ]
+    #     # Get qstat
+    #     if self.run_mode=='queue':
+    #         if ' ' in self.queue_status_command: list_command = self.queue_status_command.split()
+    #         else: list_command = [ self.queue_status_command ]
+    #         submit_command = [ self.submit_command, self.worker_submit_file ]
+    #     else:
+    #         list_command = ['ps','aux','|','grep', self.worker_submit_file ]
             
-        result = subprocess.run(list_command, stdout=subprocess.PIPE).stdout.decode("utf-8") 
-        list_queue_jobs_running=[x for x in result.split('\n') if self.jobname_queue in x]
-        n_workers_submit = self.n_workers_submit - len(list_queue_jobs_running)
-        if n_workers_submit<=0: 
-            print('enough workers already')
-            n_workers_submit=0
-        else:
-            print('Detected {} active workers, now submitting {} more'.format(len(list_queue_jobs_running), n_workers_submit))
+    #     result = subprocess.run(list_command, stdout=subprocess.PIPE).stdout.decode("utf-8") 
+    #     list_queue_jobs_running=[x for x in result.split('\n') if self.jobname_queue in x]
+    #     n_workers_submit = self.n_workers_submit - len(list_queue_jobs_running)
+    #     if n_workers_submit<=0: 
+    #         print('enough workers already')
+    #         n_workers_submit=0
+    #     else:
+    #         print('Detected {} active workers, now submitting {} more'.format(len(list_queue_jobs_running), n_workers_submit))
 
-        # If there not enough workers in the queue, submit a new one
-        for n_w in range(n_workers_submit):
-            if self.run_mode=='queue': 
-                result = subprocess.run(submit_command, stdout=subprocess.PIPE)
-                print('queue submit', submit_command, result)
-            else: os.system('./{} &'.format(self.worker_submit_file))
-            time.sleep(10)
+    #     # If there not enough workers in the queue, submit a new one
+    #     for n_w in range(n_workers_submit):
+    #         if self.run_mode=='queue': 
+    #             result = subprocess.run(submit_command, stdout=subprocess.PIPE)
+    #             print('queue submit', submit_command, result)
+    #         else: os.system('./{} &'.format(self.worker_submit_file))
+    #         time.sleep(10)
 
-        # Show the job
-        result = subprocess.run(list_command, stdout=subprocess.PIPE).stdout.decode("utf-8") 
-        list_queue_jobs_running=[x for x in result.split('\n') if self.jobname_queue in x]
+    #     # Show the job
+    #     result = subprocess.run(list_command, stdout=subprocess.PIPE).stdout.decode("utf-8") 
+    #     list_queue_jobs_running=[x for x in result.split('\n') if self.jobname_queue in x]
 
 
     def _generate_candidates(self):
@@ -434,6 +445,8 @@ class base_learner():
         self.generation_counter+=1        
         
         # Check which ones have to be mutated still
+        # Fetch completed smiles
+        # get smiles that do not exist in the list_molecules_smiles_mutated
         df_population_unique = self._get_unique_population( self.get_population_completed() )
         df_to_morph = df_population_unique[~df_population_unique.molecule_smiles.isin(self.list_molecules_smiles_mutated)]
 
@@ -714,9 +727,10 @@ class active_learner(base_learner):
             y_preds.append(y_test_pred)
             stds.append(std)
         
+        
         # Scalarize the multiobjective problem
-        y_test_pred_comb = self._get_utility(y_preds)
-        Fi_scores = self._get_utility(y_preds, stds=stds, kappa=kappa, return_array=True)
+        y_test_pred_comb = self._get_utility(np.array(y_preds))
+        Fi_scores = self._get_utility(np.array(y_preds), std=stds, kappa=kappa, return_array=True)
                 
         # Calculate the Fi_score
         df_candidates_unique['Fi_scores']=list(Fi_scores[:,0])
