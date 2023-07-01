@@ -169,11 +169,12 @@ class base_learner():
         else: 
             print('Waiting for {} cases to be finished for each batch'.format(self.Nbatch_finish_successful))
                     
-        print('Generation counter', self.generation_counter)
+        print('Generation counter:', self.generation_counter)
         
         # Adding a field for the machine-learning representation
-        self.df_population_unique[self.ml_rep_field] = [[]]*self.df_population_unique.shape[0]
-        self.df_population_unique[self.ml_rep_field] = self.df_population_unique[self.ml_rep_field].astype(object)
+        # self.df_population_unique[self.ml_rep_field] = [[]] * self.df_population_unique.shape[0]
+        # self.df_population_unique[self.ml_rep_field] = self.df_population_unique[self.ml_rep_field].astype(object)
+        self._generate_ml_vectors(self.df_population_unique)
         
         # Removing older worker directory and changing into the cleaned one
         os.system('rm -r {}'.format(dir_save_results))
@@ -264,13 +265,15 @@ class base_learner():
         which calculations still need to be carried out. 
         Then they are written to the processing queue and workers are executed.
         '''
-        if not os.path.isdir('molecules_to_calculate'): os.mkdir('molecules_to_calculate')
-        self._read_results_calculations()
+        if not os.path.isdir('molecules_to_calculate'):
+            os.mkdir('molecules_to_calculate')
+
+        self._update_population_frame()
         
         # just to be sure, but our population should always be unique
         df_population_unique = self._get_unique_population(self.df_population_unique)
         run_count=0
-        dict_res = self._read_res_file()
+        dict_results = self._get_results()
 
         for i,row in df_population_unique.iterrows():
             still_to_run=False
@@ -280,22 +283,23 @@ class base_learner():
                     and not row['calc_status']=='running' \
                     and not row['calc_status']=='completed' \
                     and not os.path.isfile('molecules_to_calculate/mol_{}.smi'.format(i)):
-                    if not row.molecule_smiles in dict_res.keys(): # maybe the calc is already in the results file
-                        still_to_run=True
-            
-            if still_to_run:                
-                run_count+=1
-                with open('molecules_to_calculate/mol_{}.smi'.format(i), 'w') as out:
-                    out.write(row.molecule_smiles)
-                df_sel=self.df_population_unique[self.df_population_unique.molecule_smiles==row.molecule_smiles]
-                for j,row2 in df_sel.iterrows():
-                    self.df_population_unique.at[j,'calc_status']='setup'                    
+                    if not row.molecule_smiles in dict_results.keys(): # maybe the calc is already in the results file
+                        # Molecule needs to be calculated. Create file
+                        with open('molecules_to_calculate/mol_{}.smi'.format(i), 'w') as out:
+                            out.write(row.molecule_smiles)
+                        
+                        # Update calc_status
+                        df_sel = self.df_population_unique[self.df_population_unique.molecule_smiles==row.molecule_smiles]
+                        for j, row2 in df_sel.iterrows():
+                            self.df_population_unique.at[j,'calc_status']='setup'
+
+                        run_count += 1                 
         
         if run_count>0 and not self.check_all_calculations_finished():
             self._submit_worker()
 
 
-    def _read_res_file(self):
+    def _get_results(self):
         ''' Parse the results_calculations.txt file '''
         res_file = 'molecules_to_calculate_results/results_calculations.txt'
         if not os.path.isfile(res_file): return {}
@@ -310,14 +314,16 @@ class base_learner():
         return dict_res
 
 
-    def _read_results_calculations(self):
-        ''' Reads results from the output-directory and updates the population frame. '''
+    def _update_population_frame(self):
+        ''' Reads results from the output-directory (molecules_to_calculate_results) and updates the population frame. '''
         
         if not os.path.isdir('molecules_to_calculate_results'):
+            # Initial check in the beginning of the run, when no calcs have been done
             print('no results directory, resuming')
-            return None            
-            
-        # Now process fizzled and running first
+            return None    
+        
+        ### Running/fizzled
+        # update frame calc_status
         res_files = [x for x in os.listdir('molecules_to_calculate_results')]
         fizzled = [ int(x.split('.')[0].split('mol_')[-1]) for i,x in enumerate(res_files) if '__fizzled' in x]
         running = [ int(x.split('.')[0].split('mol_')[-1]) for i,x in enumerate(res_files) if '__running' in x]
@@ -325,75 +331,90 @@ class base_learner():
         smi_fizzled = [ open('molecules_to_calculate/mol_{}.smi'.format(idx)).read() for idx in fizzled ]
         smi_running = [ open('molecules_to_calculate/mol_{}.smi'.format(idx)).read() for idx in running ]
         
-        # Update calculation status
         for i,fizz_idx in enumerate(fizzled):
-            df_sel=self.df_population_unique[self.df_population_unique.molecule_smiles==smi_fizzled[i]]
+            df_sel = self.df_population_unique[self.df_population_unique.molecule_smiles==smi_fizzled[i]]
             if df_sel.shape[0]==0: continue
             if df_sel.calc_status.values[0]=='fizzled': continue
             for j, row in df_sel.iterrows():
                 self.df_population_unique.at[j,'calc_status']='fizzled'
                             
         for i,run_idx in enumerate(running):
-            df_sel=self.df_population_unique[self.df_population_unique.molecule_smiles==smi_running[i]]
+            df_sel = self.df_population_unique[self.df_population_unique.molecule_smiles==smi_running[i]]
             if df_sel.shape[0]==0: continue
             if df_sel.calc_status.values[0]=='running': continue
             for j, row in df_sel.iterrows():
                 self.df_population_unique.at[j, 'calc_status']='running'   
-                
-        if not os.path.isfile('molecules_to_calculate_results/results_calculations.txt'):
-            print('no results file, resuming')
-            return None        
-        
-        # read results file
-        dict_res = self._read_res_file()
 
-        # write values to population frame
-        print('Completed before',self.df_population_unique[self.df_population_unique.calc_status!='completed'].shape)
+        ### Completed
+        # update frame calc_status as well as properties. If no results exist, exit.
+        if not os.path.isfile('molecules_to_calculate_results/results_calculations.txt'):
+            # No completed mols
+            print('no results file, resuming')
+            return None
+        else:
+            # read results file
+            dict_results = self._get_results()
+
+        print('Completed before:', self.df_population_unique[self.df_population_unique.calc_status!='completed'].shape[0])
         for i,row in self.df_population_unique[self.df_population_unique.calc_status!='completed'].iterrows():
-            if not row.molecule_smiles in dict_res.keys(): continue
-            if self.check_all_calculations_finished(read=False): break
+            if not row.molecule_smiles in dict_results.keys():
+                # No results for this mol
+                continue
+            if self.check_all_calculations_finished(read=False):
+                # Update all 'completed' mols
+                break
+
             self.df_population_unique.at[i, 'calc_status']='completed'
             self.df_population_unique.at[i, 'finished_in_round']=self.added_in_round
-            for j, p in enumerate(dict_res[row.molecule_smiles]):
-                self.df_population_unique.at[i, str(self.properties[j])]=p
-        print('Completed after',self.df_population_unique[self.df_population_unique.calc_status!='completed'].shape)
+
+            for j, p in enumerate(dict_results[row.molecule_smiles]):
+                self.df_population_unique.at[i, str(self.properties[j])] = p
+
+        print('Completed after:', self.df_population_unique[self.df_population_unique.calc_status!='completed'].shape[0])
                 
         # compute utility
         # y = [self.df_population_unique[prop].tolist() for prop in self.properties]
         y = self.df_population_unique[self.properties].values.T
         self.df_population_unique[self.utility_function_name] = self._get_utility(y)
+
+        return None
         
     
     def check_all_calculations_finished(self, read=True):
         ''' Check which batch calculations are still open '''
-        if read: self._read_results_calculations()
+        if read:
+            self._update_population_frame()
         
-        df_finished = self.get_population_completed_or_fizzled()
+        df_finished_population_unique = self.get_population_completed_or_fizzled()
         df_population_unique = self._get_unique_population(self.df_population_unique)
 
-        if df_finished.shape[0] != df_population_unique.shape[0]:
+        if df_finished_population_unique.shape[0] != df_population_unique.shape[0]:
              # How many calculations can be left_todo, before proceeding... useful for HPC parallel processing across
-             # multiple nodes. If theres only 10 left do, better not leave all the compute nodes idle while we process
+             # multiple nodes. If theres only 10 left todo, better not leave all the compute nodes idle while we process
              # these 10... lets already begin fetching the next batch. In our case, with 1 local compute node, this is not
-             # necessary.
+             # necessary, resulting code is redundant and you can basically ignore since threshold = 0 always, when Nbatch_finish_successful = 0
+
             threshold = self.Nbatch_first - self.Nbatch_finish_successful
-            left_todo = df_population_unique.shape[0]-df_finished.shape[0]
+            left_todo = df_population_unique.shape[0] - df_finished_population_unique.shape[0]
 
             if left_todo > threshold:
-                if read: print(df_finished.shape, self.df_population_unique.shape)
-                if read: print('Need to run on {} systems'.format(df_population_unique.shape[0]-\
-                                                     self._get_unique_population(df_finished).shape[0]))
+                if read:
+                    print('Finished Systems, Total Systems: {} , {}'.format(df_finished_population_unique.shape[0], df_population_unique.shape[0]))
+                    print('Systems to run: {}'.format(left_todo))
+
                 if self.Nbatch_finish_successful!=-1:
-                    if read: print('Threshold value to proceed: {}'.format(threshold))
+                    if read:
+                        print('Threshold value to proceed: {}'.format(threshold))
                 return False
         
         print('Finished, saving frame to {}'.format(os.path.join(os.getcwd(), 'df_population.json')))
-        if read: self.df_population_unique.to_json('df_population.json', orient='split')
+        if read:
+            self.df_population_unique.to_json('df_population.json', orient='split')
         return True
 
     def _submit_worker(self):
         # Workers already linked in previously, simply call them from cwd .../learner_results/
-        os.system(f'python {self.worker_submit_file}')
+        os.system(f'python {self.worker_submit_file} molecules_to_calculate')
     
     # def _submit_workers_to_cluster(self):
     #     ''' This function checks, whether there are still enough workers running. 
@@ -447,12 +468,13 @@ class base_learner():
         # Check which ones have to be mutated still
         # Fetch completed smiles
         # get smiles that do not exist in the list_molecules_smiles_mutated
-        df_population_unique = self._get_unique_population( self.get_population_completed() )
+        df_population_unique = self._get_unique_population(self.get_population_completed())
         df_to_morph = df_population_unique[~df_population_unique.molecule_smiles.isin(self.list_molecules_smiles_mutated)]
 
         self.list_molecules_smiles_mutated += df_to_morph.molecule_smiles.tolist()
         
-        print('Applying morphing operations on {} initial candidates. ({} time)'.\
+        print('****************generating candidates*************************')
+        print('Applying morphing operations on {} initial candidates. (Gen {})'.\
               format(df_to_morph.shape[0], self.generation_counter))    
         
         if isinstance(self.df_reference_chemical_space, list):
@@ -536,8 +558,8 @@ class base_learner():
         self._generate_candidates()
 
         # Update the candidate list based on the new molecules that entered the population in this step
-        df_population_unique_incomplete = self._get_unique_population( self.get_population_not_completed() )
-        n_select = self.Nbatch_first - df_population_unique_incomplete.shape[0]
+        df_population_unique_incomplete = self._get_unique_population(self.get_population_not_completed())
+        n_select = self.Nbatch_first - df_population_unique_incomplete.shape[0] # Always Nbatch_first in our case, where calculations are completely finished before next run
 
         # Identify candidates from mutated set, that are not yet in the population
         df_candidates = self.df_already_mutated
@@ -550,7 +572,7 @@ class base_learner():
         df_candidates_clean = df_candidates[ ~df_candidates.molecule_smiles.isin(self.df_population_unique.molecule_smiles) ]
         df_candidates_unique = self._get_unique_population(df_candidates_clean)
 
-        print('------------')
+        print('**************selection procedure********************')
         print('Statistics (select_and_add_new_candidates):')
         print('Already mutated size: {}, Unique: {}'.format( self.df_already_mutated.shape[0], 
                                                             self._get_unique_population(self.df_already_mutated).shape[0] ) )
@@ -562,8 +584,8 @@ class base_learner():
 
         # In the AML model, we always fit on completed data
         # Candidates are derived from full population
-        df_candidates_unique = self.selection_step(df_candidates, df_candidates_unique, n_select).copy()  
-        print('Candidates selected (unique): {}'.format( df_candidates_unique.shape[0] ))        
+        df_candidates_unique = self.selection_step(df_candidates_unique, n_select).copy()  
+        print('Active learner selected candidates: {}'.format(df_candidates_unique.shape[0]))         
 
         # Add index and update status
         last_index = np.max(self.df_population_unique.index.tolist())+1
@@ -573,14 +595,16 @@ class base_learner():
         df_candidates_unique['added_in_round']=self.added_in_round
 
         # Combine with population and call the run script
-        self.df_population_unique = pd.concat([self.df_population_unique, df_candidates_unique], sort=True)
-        print('Population size after (Unique): {}'.format( \
-                                                    self._get_unique_population(self.df_population_unique).shape[0] ) ) 
+        self.df_population_unique = pd.concat([self.df_population_unique, df_candidates_unique]) #, sort=True) not sure why sort=True here
+        print('Population size after (Unique): {}'.format(\
+                                                    self._get_unique_population(self.df_population_unique).shape[0])) 
         print('------------')
 
         # Run unfinished calculations on the population
         # Note, that population will only be written, when check_all_calculations_finished is called
-        self.run_calculations_population()
+        # self.run_calculations_population()
+
+        # Might be better to run calculations outside this function...
        
 
     def selection_step(self):
@@ -652,7 +676,7 @@ class active_learner(base_learner):
         for i,row in df.iterrows():
             fps.append(AllChem.GetMorganFingerprint(Chem.MolFromSmiles(row.molecule_smiles), self.fp_radius))
                         
-        df[self.ml_rep_field] = [[]]*df.shape[0]
+        df[self.ml_rep_field] = [[]] * df.shape[0]
         df[self.ml_rep_field] = df[self.ml_rep_field].astype(object)
         df[self.ml_rep_field] = fps
         
@@ -660,31 +684,31 @@ class active_learner(base_learner):
     
     
         
-    def _get_ML_model(self, prop_name, evaluate_model=True):
-        """ Helper: Fit ML model on one property """
+    def _get_ML_model(self, prop_name):
+        """ Helper: Fit ML model on one property of the current population frame"""
         
         df_population_unique = self._get_unique_population(self.get_population_completed())
-        df_population_unique = self._generate_ml_vectors(df_population_unique)
+        # df_population_unique = self._generate_ml_vectors(df_population_unique)
         
         print('')
         print('Fitting property: {}'.format(prop_name))
         print('Size of fitting set for ML model (_get_ML_model): {}'.format(df_population_unique.shape[0]))
         
-        X_train = np.array(df_population_unique[self.ml_rep_field].tolist())
-        y_train = df_population_unique[prop_name].to_numpy()
+        X_train = df_population_unique[self.ml_rep_field].values
+        y_train = df_population_unique[prop_name].values
         
         kernel_params = self.kernel_parameters[prop_name]
         niter_local=5
 
         gpr = GPR_tanimoto()
-        gpr = _run_gpr_fit_bayesian_opt( X_train, y_train, gpr, 
+        gpr = _run_gpr_fit_bayesian_opt(X_train, y_train, gpr, 
                                      starting_values=[kernel_params['C'], 
                                                       kernel_params['length_scale'],
                                                       kernel_params['sigma_n']], niter_local=niter_local)
 
-        kernel_params['C']=gpr.constant_kernel
-        kernel_params['length_scale']=gpr.gamma_kernel
-        kernel_params['sigma_n']=gpr.sigma_white      
+        kernel_params['C'] = gpr.constant_kernel
+        kernel_params['length_scale'] = gpr.gamma_kernel
+        kernel_params['sigma_n'] = gpr.sigma_white      
 
         self.kernel_parameters[prop_name] = kernel_params
         
@@ -712,25 +736,29 @@ class active_learner(base_learner):
         except: pass
         
         df_candidates_unique = self._generate_ml_vectors(df_candidates_unique)
-        round_carried_out = max(self.get_population_completed()['generation'].tolist())
+        # round_carried_out = max(self.get_population_completed()['generation'].tolist())
 
         # Fit and predict on single properties separately
         y_preds=[]
         stds=[]
-        X_test = df_candidates_unique[self.ml_rep_field].to_numpy()
-        X_test = np.array(df_candidates_unique[self.ml_rep_field].tolist())
+        X_test = df_candidates_unique[self.ml_rep_field].values
         for prop_name in self.properties:
-            if not use_previously_fitted_models: gpr, X_train = self._get_ML_model(prop_name, evaluate_model=True)
-            else: gpr = self.MLModels[prop_name]; X_train = gpr.X_train
+            if not use_previously_fitted_models:
+                gpr, X_train = self._get_ML_model(prop_name)
+            else:
+                gpr = self.MLModels[prop_name]; X_train = gpr.X_train
+
             self.MLModels[prop_name] = deepcopy(gpr)
-            y_test_pred, std = gpr.predict( X_test, return_std=True )
+            y_test_pred, std = gpr.predict(X_test, return_std=True)
             y_preds.append(y_test_pred)
             stds.append(std)
         
+        y_preds = np.array(y_preds)
+        stds = np.array(stds)
         
         # Scalarize the multiobjective problem
-        y_test_pred_comb = self._get_utility(np.array(y_preds))
-        Fi_scores = self._get_utility(np.array(y_preds), std=stds, kappa=kappa, return_array=True)
+        y_test_pred_comb = self._get_utility(y_preds)
+        Fi_scores = self._get_utility(y_preds, std=stds, kappa=kappa, return_array=True)
                 
         # Calculate the Fi_score
         df_candidates_unique['Fi_scores']=list(Fi_scores[:,0])
@@ -815,6 +843,9 @@ class active_learner(base_learner):
             y_preds.append(y_test_pred)
             stds.append(std)
 
+        y_preds = np.array(y_preds)
+        stds = np.array(stds)
+
         # Scalarize the multiobjective problem
         Fi_scores = self._get_utility(y_preds, stds=stds, return_array=True)
 
@@ -823,9 +854,9 @@ class active_learner(base_learner):
                  [self.df_reference_chemical_space_unique.molecule_smiles.\
                  isin(df_candidates_unique.molecule_smiles)]            
 
-        y_test_comb = self._get_utility([df_sel[x].tolist() for x in self.properties])
-        res = self._get_utility([df_sel[x].tolist() for x in self.properties], 
-                                                                        stds=stds, return_array=True)
+        y_test_comb = df_sel[self.properties].T
+        y_test_comb_utility = self._get_utility(y_test_comb)
+        res = self._get_utility(y_test_comb, std=stds, return_array=True)
         #shape: fi_hole, std_hole
         std_hole = Fi_scores[:,1]
 
@@ -937,7 +968,7 @@ class active_learner(base_learner):
 
 
                   
-    def selection_step(self, df_candidates, df_candidates_unique, n_select):
+    def selection_step(self, df_candidates_unique, n_select):
         """ Active learner selection step: Either select from full candidate list or resort 
             to the reduction of search space. """
         
@@ -968,16 +999,78 @@ class active_learner(base_learner):
 
 
         if df_candidates_unique.shape[0] > self.Nbatch_first:
+            print('***************Nbatch Satisfied******************')
             
             df_candidates_unique = self._predict_Fi_scores(df_candidates_unique)
             print('df_candidates_unique', df_candidates_unique.shape)
 
             self._evaluate_ml_external_frame(df_candidates_unique)
             
-            Fi_scores = df_candidates_unique['Fi_scores'].tolist()
+            Fi_scores = df_candidates_unique['Fi_scores'].values
 
-            df_candidates_unique = df_candidates_unique.iloc[np.flip(np.argsort(Fi_scores),axis=0)[0:n_select]]
-            
-        print('Active learner selected candidates: {}'.format(df_candidates_unique.shape[0]))        
-
+            # Pick n_select (Nbatch in our case) largest utility candidates
+            df_candidates_unique = df_candidates_unique.iloc[np.flip(np.argsort(Fi_scores),axis=0)[:n_select]]
+         
         return df_candidates_unique
+    
+
+
+######## Standalone functions without class reference
+
+def get_unique_population(dframe):
+    return dframe.copy().drop_duplicates(subset='molecule_smiles')
+
+def get_population_completed(dframe):
+    return dframe.copy()[dframe.calc_status=='completed']
+
+def generate_ml_vectors(dframe, ml_rep_field='morgan_fp_bitvect'):
+        """ Helper: Add ML-vectors to dataframe """
+        df = dframe.copy()
+
+        fp_radius = 2 
+        fps=[]
+        for i,row in df.iterrows():
+            fps.append(AllChem.GetMorganFingerprint(Chem.MolFromSmiles(row.molecule_smiles), fp_radius))
+                        
+        df[ml_rep_field] = [[]] * df.shape[0]
+        df[ml_rep_field] = df[ml_rep_field].astype(object)
+        df[ml_rep_field] = fps
+        
+        return df   
+    
+def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect'):
+    """ Helper: Fit ML model on one property of the current population frame"""
+    df_population_unique = get_unique_population(get_population_completed(dframe))
+    df_population_unique = generate_ml_vectors(df_population_unique)
+    
+    print('')
+    print('Fitting property: {}'.format(prop_name))
+    print('Size of fitting set for ML model (_get_ML_model): {}'.format(df_population_unique.shape[0]))
+    
+    X_train = df_population_unique[ml_rep_field].values
+    y_train = df_population_unique[prop_name].values
+    
+    kernel_params = {'C':1., 'length_scale':1., 'sigma_n':0.1}
+    niter_local=5
+
+    gpr = GPR_tanimoto()
+    gpr = _run_gpr_fit_bayesian_opt(X_train, y_train, gpr, 
+                                    starting_values=[kernel_params['C'], 
+                                                    kernel_params['length_scale'],
+                                                    kernel_params['sigma_n']], niter_local=niter_local)
+
+    kernel_params['C'] = gpr.constant_kernel
+    kernel_params['length_scale'] = gpr.gamma_kernel
+    kernel_params['sigma_n'] = gpr.sigma_white      
+    
+    os.system('echo "{} {} {} {} {}" >> kernel_params.txt'.format(kernel_params['C'],
+                                                                kernel_params['length_scale'],
+                                                                kernel_params['sigma_n'],
+                                                                max(df_population_unique['added_in_round'].tolist()),
+                                                                prop_name ))
+    
+    print('Fitted Kernel c {} rbf {} sigma {} Round: {}'.format(kernel_params['C'],
+                                                            kernel_params['length_scale'],
+                                                            kernel_params['sigma_n'],
+                                                            max(df_population_unique['added_in_round'].tolist()) ))
+    return gpr, X_train, kernel_params

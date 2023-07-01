@@ -4,6 +4,7 @@ from ase.io import read, Trajectory
 from glob import glob
 from itertools import takewhile, dropwhile
 import logging
+import sys
 
 
 def parse_energies(string):
@@ -116,7 +117,7 @@ def get_logger():
     logger_ = logging.getLogger()
     logger_.setLevel(logging.INFO)
     if not logger_.handlers:
-        console_handler = logging.StreamHandler()
+        console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s: %(message)s'))
         logger_.addHandler(console_handler)
     return logger_

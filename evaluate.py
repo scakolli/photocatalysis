@@ -39,7 +39,6 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
         print(f"Driving Potential (V) {driving_potential} > Rate Determining Potential (V) {rdg / 1.0}")
 
     eval_logger.info(f'Evaluation Took {time.perf_counter() - start}s')
-    print('#######################')
 
     if scratch_dir is not None:
         os.chdir(base)

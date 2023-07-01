@@ -91,15 +91,19 @@ def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calcul
                     stdoutput = process_output.stdout.decode('UTF-8')
 
                     if process_output.returncode != 0:
+                        # If an error exists, folder is erased so as to not interfere with other runs
                         os.chdir('..')
+                        shutil.rmtree(fname)
                         raise RuntimeError('optimizing from high temp config failed to help scf convergence')
 
                 else:
                     os.chdir('..')
+                    shutil.rmtree(fname)
                     raise RuntimeError('restart with etemp increase failed to help scf convergence')
 
         else:
             os.chdir('..')
+            shutil.rmtree(fname)
             raise RuntimeError('Abnormal termination of xtb \n'+'\n'.join(error))
     ################# Error Handling Finished #################
 
