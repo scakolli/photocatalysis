@@ -31,7 +31,7 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
 
     ### Rate determining free energy and other quantities
     eval_logger.info('Calculating thermochemical properties')
-    asites, rds, rdg, essi = calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs)
+    rdg, asites, rds, essi = calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs)
     driving_potential = substrate.info['ip'] / 1. - SHE_VACUUM_POTENTIAL
 
     if driving_potential > rdg:
@@ -43,7 +43,7 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
     if scratch_dir is not None:
         os.chdir(base)
 
-    return driving_potential, rdg, essi, asites, rds
+    return driving_potential, rdg, asites, rds, essi
 
 
 def calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs):
@@ -72,4 +72,4 @@ def calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs):
 
     active_sites = [oh_stable.info['active_site'], o_stable.info['active_site'], ooh_stable.info['active_site']]
 
-    return active_sites, rate_det_step, rate_det_energy, ESSI
+    return rate_det_energy, active_sites, rate_det_step, ESSI
