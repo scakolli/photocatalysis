@@ -6,6 +6,19 @@ from itertools import takewhile, dropwhile
 import logging
 import sys
 
+def parse_wall_cpu_time(string):
+    walltime_flag = False
+    cputime_flag = False
+    for line in string.splitlines():
+        if 'wall-time' in line and not walltime_flag:
+            # e = float(line.split()[-3]) * Hartree
+            walltime = float(line.split()[-2])
+            walltime_flag = True
+        if 'cpu-time' in line and not cputime_flag:
+            # e = float(line.split()[-3]) * Hartree
+            cputime = float(line.split()[-2])
+            cputime_flag = True
+    return walltime, cputime
 
 def parse_energies(string):
     energy_parsed = False
@@ -90,6 +103,8 @@ def parse_stdoutput(xtb_output, runtype):
         d['ip'], d['ea'], d['ehomo'], d['elumo'] = parse_ipea_homolumo(xtb_output)
     elif runtype == 'vfukui':
         d['fukui'] = parse_fukui_indices(xtb_output)
+    
+    d['walltime'], d['cputime'] = parse_wall_cpu_time(xtb_output)
 
     return d
 
@@ -128,3 +143,6 @@ def explicitly_broadcast_to(shape, *gs_expres):
     for g in gs_expres:
         out.append(np.broadcast_to(g, shape))
     return tuple(out)
+
+def get_batches(lst, num_batches):
+    return [lst[i:i + num_batches] for i in range(0, len(lst), num_batches)]

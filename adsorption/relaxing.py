@@ -7,16 +7,17 @@ import itertools
 from photocatalysis.adsorption.helpers import pairwise, get_neighboring_bonds_list
 from photocatalysis.adsorption.constants import OH, O, OOH
 from photocatalysis.adsorption.tools import build_configurations
-from photocatalysis.thermodynamics.tools import multi_run
+from photocatalysis.thermodynamics.tools import multi_run, get_multi_process_cores
 from photocatalysis.thermodynamics.helpers import create_trajectories_from_logs
 
 def build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=-1, additional_conformers=False):
     ### Build Configs
     configsOH, configsO, configsOOH = build_configurations(substrate, sites)
     num_configs = len(configsOH) # num configs each, independent of adsorbate
+    multi_process = get_multi_process_cores(num_configs, multi_process)
 
     ### Relaxation
-    calc_kwargs_sub = deepcopy(substrate.info['calc_params']) 
+    calc_kwargs_sub = deepcopy(substrate.info['calc_params'])
     configs = multi_run(configsOH+configsO+configsOOH, runtype=f'opt {optlevel}', calc_kwargs=calc_kwargs_sub, multi_process=multi_process)
     configsoh, configso, configsooh = np.array(configs, dtype='object').reshape(3, num_configs).tolist()
 

@@ -58,7 +58,7 @@ def calculate_thermochemistry(substrate, oh_configs, o_configs, ooh_configs):
     min_energy_configs = [oh_configs[Eoh.argmin()], o_configs[Eo.argmin()], ooh_configs[Eooh.argmin()]]
     oh_stable, o_stable, ooh_stable = multi_run(min_energy_configs, runtype='ohess vtight', calc_kwargs=calculator_params, multi_process=3)
     ### Free energies of intermediates
-    gs = substrate.info['energy'] +  substrate.info['zpe'] - substrate.info['entropy']
+    gs = substrate.info['energy'] + substrate.info['zpe'] - substrate.info['entropy']
     goh = oh_stable.info['energy'] + oh_stable.info['zpe'] - oh_stable.info['entropy']
     go = o_stable.info['energy'] + o_stable.info['zpe'] - o_stable.info['entropy']
     gooh = ooh_stable.info['energy'] + ooh_stable.info['zpe'] - ooh_stable.info['entropy']

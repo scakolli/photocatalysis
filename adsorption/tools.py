@@ -1,9 +1,14 @@
 import numpy as np
 from copy import deepcopy
+import multiprocessing
+from functools import partial
+from itertools import repeat
+import time
 
 from rdkit import Chem
-from osc_discovery.descriptor_calculation.conformers import get_conformers_rdkit as get_conformers
-from photocatalysis.thermodynamics.tools import single_run
+from photocatalysis.conformers import get_conformers_rdkit as get_conformers
+from photocatalysis.thermodynamics.tools import single_run, multi_run, get_multi_process_cores
+from photocatalysis.thermodynamics.helpers import get_logger
 
 from photocatalysis.adsorption.helpers import get_neighboring_bonds_list, equivalent_atoms_grouped, equivalent_atoms
 from photocatalysis.adsorption.helpers import find_constrained_optimal_position
@@ -13,7 +18,7 @@ from photocatalysis.adsorption.helpers import ase2rdkit_valencies
 from osc_discovery.cheminformatics.cheminformatics_misc import rdkit2ase
 from rdkit.Chem import AllChem
 
-def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, multi_process_sp=1, symmetry_charge_thresh=0.001, return_all=False):
+def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, multi_process_sp=1, symmetry_charge_thresh=0.001, job_number=0, print_conf_gen_output=False):
     """Prepare the substrate for further use
     get_conformers() generates a list of confs using ETKDG implemented in RDKIT. Depending on the number of
     rotatable bonds, this procedure can create as many as 300 conformations (all satisfying the RMSD pruning criteria
@@ -39,13 +44,14 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
 
     """
     # Generate sorted low-energy conformations using ETKDG and MMFF94
-    substrate_confs = get_conformers(smile_string, n_cpu=multi_process_conf)
+    substrate_confs = get_conformers(smile_string, n_cpu=multi_process_conf, print_output=print_conf_gen_output)
     substrate = substrate_confs.pop(0) # Lowest energy conf
 
     # Relax at the tight-binding level with xTB, determine zero-point energy and entropy contributions, calculate
     # the ionization potential, and then request a charge population analysis for 2D symmetry checking purposes
-    substrate = single_run(substrate, runtype='ohess vtight', **calculator_params, parallel=multi_process_sp)
-    substrate = single_run(substrate, runtype='vipea', **calculator_params, pop='', parallel=multi_process_sp)
+    # substrate = single_run(substrate, runtype=f'ohess {optlevel}', **calculator_params, parallel=multi_process_sp)
+    substrate = single_run(substrate, runtype='ohess vtight', **calculator_params, parallel=multi_process_sp, job_number=job_number)
+    substrate = single_run(substrate, runtype='vipea', **calculator_params, pop='', parallel=multi_process_sp, job_number=job_number)
     qs = substrate.info['qs']  # charges
 
     # Attach useful information to the substrate object
@@ -60,10 +66,76 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
     substrate.info['nonH_count'] = len(nonH_atoms)
     del substrate.info['qs']
 
-    if return_all:
-        return substrate_confs
+    return substrate
+
+def prepare_substrate_worker(job):
+    job_num, job_input = job
+    smile_string, calc_params_dict = job_input
+    return prepare_substrate(smile_string, calc_params_dict, job_number=job_num)
+
+def multi_prepare_substrate(smile_string_list, calc_kwargs=None, multi_process=1):
+    # Generate (job_number, (single_run_parameters)) jobs to send to 
+    multi_process = get_multi_process_cores(len(smile_string_list), multi_process) # multi_process=-1 returns returns max efficient cores, else return multi_process
+    jobs = list(enumerate(zip(smile_string_list, repeat(calc_kwargs))))
+
+    job_logger = get_logger()
+    print('Devoted Cores:', multi_process)
+    job_logger.info(f'substrate preparation jobs to do: {len(smile_string_list)}')
+
+    start = time.perf_counter()
+    if multi_process == 1:
+        # Serial Relaxation
+        completed_molecule_list = list(map(prepare_substrate_worker, jobs))
     else:
-        return substrate
+        # Parallel Relaxation
+        with multiprocessing.Pool(multi_process) as pool:
+            completed_molecule_list = pool.map(prepare_substrate_worker, jobs)
+
+    job_logger.info(f'finished jobs. Took {time.perf_counter() - start}s')
+
+    return completed_molecule_list
+
+def prepare_substrate_batch(smile_string_list, calculator_params, multi_process=-1, symmetry_charge_thresh=0.001, print_conf_gen_output=False):
+    # In HPC setup, single_run is inefficient, since so many cores are left idle waiting for jobs. Increasing the num of cores for each smile_string eval
+    # doesnt solve the issue either, as it becomes inefficent to throw, say 16 cores, to perform the relaxation of 1 molecule... better process multiple at a time
+    multi_process = get_multi_process_cores(len(smile_string_list), multi_process) # multi_process=-1 returns returns max efficient cores, else return multi_process
+    print('Devoted Cores:', multi_process)
+
+    ### Conformer Generation
+    # Generate sorted low-energy conformations using ETKDG and MMFF94
+    conf_logger = get_logger()
+    start = time.perf_counter()
+    conf_logger.info(f'conf-gen jobs to do: {len(smile_string_list)}')
+    with multiprocessing.Pool(multi_process) as pool:
+        substrates_confs = pool.map(partial(get_conformers, print_output=print_conf_gen_output), smile_string_list)
+    conf_logger.info(f'finished jobs. Took {time.perf_counter() - start}s')
+
+    substrates = [s[0] for s in substrates_confs] # pick lowest energy one
+
+    ### xTB relaxation, IP, and Pop analysis
+    # Relax at the tight-binding level with xTB, determine zero-point energy and entropy contributions, calculate
+    # the ionization potential, and then request a charge population analysis for 2D symmetry checking purposes
+    # substrate = single_run(substrate, runtype=f'ohess {optlevel}', **calculator_params, parallel=multi_process_sp)
+    pop_calculator_params = deepcopy(calculator_params)
+    pop_calculator_params.update({'pop':''})
+    substrates = multi_run(substrates, runtype='ohess vtight', calc_kwargs=calculator_params, multi_process=multi_process)
+    substrates = multi_run(substrates, runtype='vipea', calc_kwargs=pop_calculator_params, multi_process=multi_process)
+    qss = [s.info['qs'] for s in substrates]  # charges for multiple subs
+
+    ### Symm checking and attaching useful info
+    for qs, substrate, smile_string in zip(qss, substrates, smile_string_list):
+        nonH_atoms = [atom.index for atom in substrate if atom.symbol != 'H']
+        eqv_atoms_grp = equivalent_atoms_grouped(smile_string)
+
+        substrate.info['equivalent_atoms_grouped'] = eqv_atoms_grp
+        substrate.info['equivalent_atoms'] = equivalent_atoms(eqv_atoms_grp, qs, symmetry_charge_thresh=symmetry_charge_thresh)
+        substrate.info['calc_params'] = deepcopy(calculator_params)
+        substrate.info['bonds'] = get_neighboring_bonds_list(substrate)
+        substrate.info['nonH_count'] = len(nonH_atoms)
+        del substrate.info['qs']
+    
+    return substrates
+
 
 def get_adsorbate_conformers(molecule, numConfs=10, numThreads=4, return_all=False):
     ### Generate conformers using RDKIT and optimize them with a FF. Sorted by energy.

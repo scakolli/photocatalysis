@@ -135,31 +135,39 @@ def single_run_worker(job):
     mol, runt, keepf, calc_kwargs = job_input
     return single_run(mol, runtype=runt, keep_folder=keepf, job_number=job_num, **calc_kwargs)
 
-def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=-1):
+def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=1):
     # Generate (job_number, (single_run_parameters)) jobs to send to worker
     jobs = list(enumerate(zip(molecule_list, repeat(runtype), repeat(keep_folders), repeat(calc_kwargs))))
 
     job_logger = get_logger()
-    job_logger.info(f'Jobs to do: {len(molecule_list)}')
+    job_logger.info(f'{runtype} jobs to do: {len(molecule_list)}')
     start = time.perf_counter()
     if multi_process == 1:
         # Serial Relaxation
         completed_molecule_list = list(map(single_run_worker, jobs))
     else:
         # Parallel Relaxation
-        if multi_process == -1:
-            # Use maximum avaliable cores
-            if len(molecule_list) < MAX_MULTI_PROCESS:
-                multi_process = len(molecule_list)
-            else:
-                multi_process = MAX_MULTI_PROCESS
-
         with multiprocessing.Pool(multi_process) as pool:
             completed_molecule_list = pool.map(single_run_worker, jobs)
 
-    job_logger.info(f'Finished jobs. Took {time.perf_counter() - start}s')
+    job_logger.info(f'finished jobs. Took {time.perf_counter() - start}s')
 
     return completed_molecule_list
+
+def get_multi_process_cores(num_jobs, multi_process):
+    # Returns number_of_cores
+    if multi_process == -1:
+        # Use maximum avaliable cores
+        if num_jobs < MAX_MULTI_PROCESS:
+            # dont commit more cores than jobs... adds overhead
+            multi_process = num_jobs
+        else:
+            # use user selected max number of cores
+            multi_process = MAX_MULTI_PROCESS
+    else:
+        pass
+
+    return multi_process
 
 def free_energies(Gs, GOH, GO, GOOH):
     # Given the free energies of each intermediate (could also just be the energies, if you want a non-zpe/ts approx.)

@@ -3,8 +3,54 @@ import subprocess
 import time
 import sys
 
-SCRIPT = '/home/btpq/bt308495/Thesis/photocatalysis/worker/calc_xtb.py'
+from photocatalysis.evaluate import evaluate_substrate
 
+########################## RUN DEFINITIONS ###################################
+# def run_evaluation_subprocess(run_command):
+#     ### SLOW!
+#     ### Everytime the xtb_calc.py script is called, 2sec is spent importing the photocatalysis.evaluate module. Instead,
+#     ### Import it once and run the evaluation directly in here without calling a subprocess
+#     try:
+#         # (1) If you only want stderr captured and logged, stdout printing/logging not affect
+#         # (2) If you want both stdout and stderr captured and logged for error handling... no printed/logging output during run
+#         # subprocess.run(run_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) #(2)
+
+#         subprocess.run(run_command, check=True, stderr=subprocess.PIPE) #(1)
+#         success = True
+#     except Exception as e:
+#         success = False
+#         print('Error/Timeout Encountered')
+#         os.system('echo "{}" >> errors.txt'.format(e.stderr.decode('UTF-8'))) # (1)
+#         # os.system('echo "{}" >> errors.txt'.format(e.stdout)) # (2)
+    
+#     return success
+
+def run_evaluation():
+    with open(path_system_to_calculate) as out:
+        smi = out.readlines()[0]
+
+    try:
+        ip, rdg, asites, rds, essi = evaluate_substrate(smi, CALC_PARAMS) # scratch_dir=SCRATCH_DIR)
+        os.system('echo "{} {} {}" >> results.txt'.format(smi, ip, rdg, asites, rds, essi))
+        os.system('echo "{} {} {}" >> ../results_calculations.txt'.format(smi, ip, rdg, asites, rds, essi))
+
+        success = True
+    except Exception as e:
+        success = False
+
+        print('Error/Timeout Encountered')
+        print(e)
+        os.system('echo "{}" >> errors.txt'.format(e))
+        os.chdir(path_system_to_calculate_results)
+    
+    return success
+
+########################## XTB/FOLDER PARAMETERS ###################################
+# SCRIPT = '/home/btpq/bt308495/Thesis/photocatalysis/worker/calc_xtb.py'
+CALC_PARAMS = {'gfn':2, 'acc':0.2, 'etemp':298.15, 'gbsa':'water'}
+# SCRATCH_DIR = '/home/btpq/bt308495/Thesis/scratch'
+
+########################## RUN ###################################
 if __name__ == '__main__':
     
     folder_to_calculate = sys.argv[1]
@@ -45,20 +91,9 @@ if __name__ == '__main__':
         os.mkdir(path_system_to_calculate_results)
         os.chdir(path_system_to_calculate_results)
 
-        run_command = ['python', SCRIPT, path_system_to_calculate]
-
-        try:
-            # (1) If you only want stderr captured and logged, stdout printing/logging not affect
-            # (2) If you want both stdout and stderr captured and logged for error handling... no printed/logging output during run
-            # subprocess.run(run_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) #(2)
-
-            subprocess.run(run_command, check=True, stderr=subprocess.PIPE) #(1)
-            success = True
-        except Exception as e:
-            success = False
-            print('Error/Timeout Encountered')
-            os.system('echo "{}" >> errors.txt'.format(e.stderr.decode('UTF-8'))) # (1)
-            # os.system('echo "{}" >> errors.txt'.format(e.stdout)) # (2)
+        # run_command = ['python', SCRIPT, path_system_to_calculate]
+        # success = run_evaluation_subprocess(run_command)
+        success = run_evaluation()
 
         os.system('echo {} >> results.txt'.format(time.perf_counter() - start_time))
         os.chdir('..')
