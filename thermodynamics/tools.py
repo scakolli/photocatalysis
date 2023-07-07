@@ -1,6 +1,4 @@
 import os
-import matplotlib.pyplot as plt
-import numpy as np
 import subprocess
 from copy import deepcopy
 import shutil
@@ -9,11 +7,7 @@ import time
 import multiprocessing
 
 import ase
-from photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST, dG4_REST
-from photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges, get_logger, explicitly_broadcast_to
-from photocatalysis.thermodynamics.helpers import xtboptlog_to_ase_trajectory
-
-MAX_MULTI_PROCESS = 42 # Maximum number of cores allowable for multiprocessing
+from photocatalysis.thermodynamics.helpers import parse_stdoutput, parse_charges, get_logger, get_multi_process_cores, xtboptlog_to_ase_trajectory
 
 def single_run(molecule, runtype='sp', keep_folder=False, job_number=0, **calculator_kwargs):
     """
@@ -135,81 +129,21 @@ def single_run_worker(job):
     mol, runt, keepf, calc_kwargs = job_input
     return single_run(mol, runtype=runt, keep_folder=keepf, job_number=job_num, **calc_kwargs)
 
-def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=1):
+def multi_run(molecule_list, runtype='opt', keep_folders=False, calc_kwargs=None, multi_process=-1):
+    # Exception handling done on the parent level... if one configuration throws an error, then
+    # the whole process returns an error. For child process error handling, see 'imap' in multi_prepare_substrate
     # Generate (job_number, (single_run_parameters)) jobs to send to worker
+    multi_process = get_multi_process_cores(len(molecule_list), multi_process) # multi_process=-1 returns returns max efficient cores, else return multi_process
     jobs = list(enumerate(zip(molecule_list, repeat(runtype), repeat(keep_folders), repeat(calc_kwargs))))
 
     job_logger = get_logger()
     job_logger.info(f'{runtype} jobs to do: {len(molecule_list)}')
     start = time.perf_counter()
-    if multi_process == 1:
-        # Serial Relaxation
-        completed_molecule_list = list(map(single_run_worker, jobs))
-    else:
-        # Parallel Relaxation
-        with multiprocessing.Pool(multi_process) as pool:
-            completed_molecule_list = pool.map(single_run_worker, jobs)
+
+    # Parallel Relaxation
+    with multiprocessing.Pool(multi_process) as pool:
+        completed_molecule_list = pool.map(single_run_worker, jobs)
 
     job_logger.info(f'finished jobs. Took {time.perf_counter() - start}s')
 
     return completed_molecule_list
-
-def get_multi_process_cores(num_jobs, multi_process):
-    # Returns number_of_cores
-    if multi_process == -1:
-        # Use maximum avaliable cores
-        if num_jobs < MAX_MULTI_PROCESS:
-            # dont commit more cores than jobs... adds overhead
-            multi_process = num_jobs
-        else:
-            # use user selected max number of cores
-            multi_process = MAX_MULTI_PROCESS
-    else:
-        pass
-
-    return multi_process
-
-def free_energies(Gs, GOH, GO, GOOH):
-    # Given the free energies of each intermediate (could also just be the energies, if you want a non-zpe/ts approx.)
-    # determine the free energy changes of each step in the proposed reaction mechanism
-    dG1 = GOH - Gs + dG1_REST
-    dG2 = GO - GOH + dG2_REST
-    dG3 = GOOH - GO + dG3_REST
-    dG4 = Gs - GOOH + dG4_REST
-
-    return np.array([dG1, dG2, dG3, dG4])
-
-def free_energies_multidim(Gs, GOH, GO, GOOH, explicitly_broadcast=True):
-    # Vectorized free energy expressions with numpy broadcasting.
-    # (Gs) : scalar, (GOH, GO, GOOH) : arbitrary length numpy arrays corresponding to each configuration
-    # Access free energy expression of configs (3,5,6) / (OH_index, O_index, OOH_index) with for example
-    # G[3,5,6] -> [1.24,1.22,1.24,1.22]
-
-    g1 = GOH[:, None, None] - Gs + dG1_REST
-    g2 = GO[None, :, None] - GOH[:, None, None] + dG2_REST
-    g3 = GOOH[None, None, :] - GO[None, :, None] + dG3_REST
-    g4 = Gs - GOOH[None, None, :] + dG4_REST
-
-    if explicitly_broadcast:
-        tot_shape = len(GOH), len(GO), len(GOOH)
-        g1b, g2b, g3b, g4b = explicitly_broadcast_to(tot_shape, g1, g2, g3, g4)
-        G = np.moveaxis(np.array((g1b, g2b, g3b, g4b)), 0, 3)
-        return G
-    else:
-        return g1, g2, g3, g4
-
-def free_energy_diagram(Gs_array):
-    # quick and dirty plotting of free energies
-
-    x = [0, 1, 2, 3, 4] # steps
-    y = [0]+Gs_array.cumsum().tolist() # No bias
-    y_123 = [0] + (Gs_array - 1.23).cumsum().tolist() # Equilibrium bias 1.23V
-    y_downhill = [0] + (Gs_array - Gs_array.max()).cumsum().tolist() # Bias when all steps are down hill
-
-    plt.step(x, y, 'k', label='0V')
-    plt.step(x, y_123, '--k', label='1.23V')
-    plt.step(x, y_downhill, 'b', label='{}V'.format(round(Gs_array.max(), 2)))
-
-    plt.xlabel('Intermediates')
-    plt.ylabel('Free Energy (eV)')
-    plt.legend()

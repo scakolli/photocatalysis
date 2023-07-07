@@ -6,6 +6,8 @@ from itertools import takewhile, dropwhile
 import logging
 import sys
 
+MAX_MULTI_PROCESS = 42 # Maximum number of cores allowable for multiprocessing
+
 def parse_wall_cpu_time(string):
     walltime_flag = False
     cputime_flag = False
@@ -146,3 +148,18 @@ def explicitly_broadcast_to(shape, *gs_expres):
 
 def get_batches(lst, num_batches):
     return [lst[i:i + num_batches] for i in range(0, len(lst), num_batches)]
+
+def get_multi_process_cores(num_jobs, multi_process):
+    # Returns number_of_cores
+    if multi_process == -1:
+        # Use maximum avaliable cores
+        if num_jobs < MAX_MULTI_PROCESS:
+            # dont commit more cores than jobs... adds overhead
+            multi_process = num_jobs
+        else:
+            # use user selected max number of cores
+            multi_process = MAX_MULTI_PROCESS
+    else:
+        pass
+
+    return multi_process

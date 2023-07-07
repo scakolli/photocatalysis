@@ -1,4 +1,5 @@
 from itertools import tee
+import traceback
 import numpy as np
 from scipy.optimize import minimize
 
@@ -112,4 +113,21 @@ def find_constrained_optimal_position(site_position, sub_position, distance_cons
                       constraints=constraints)
 
     return result.x
+
+def multiprocessing_run_and_catch(multiprocessing_iterator):
+    # Improved error handling using multiprocessing.Pool.imap()
+    # Supply a multiprocessing iterator. Try to run jobs and catch errors. Return only successfully completed jobs, and caught errors.
+    results, errors = [], []
+    iteration = 0
+    while True:
+        try:
+            result = next(multiprocessing_iterator)
+            results.append(result)
+        except StopIteration:
+            break
+        except Exception as e:
+            errors.append((iteration, traceback.format_exc()))
+        iteration += 1
+
+    return results, errors
 
