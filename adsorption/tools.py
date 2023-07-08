@@ -48,11 +48,9 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
     substrate_confs = get_conformers(smile_string, n_cpu=multi_process_conf, print_output=print_conf_gen_output)
     substrate = substrate_confs.pop(0) # Lowest energy conf
 
-    # Relax at the tight-binding level with xTB, determine zero-point energy and entropy contributions, calculate
-    # the ionization potential, and then request a charge population analysis for 2D symmetry checking purposes
-    # substrate = single_run(substrate, runtype=f'ohess {optlevel}', **calculator_params, parallel=multi_process_sp)
-    substrate = single_run(substrate, runtype='ohess vtight', **calculator_params, parallel=multi_process_sp, job_number=job_number)
-    substrate = single_run(substrate, runtype='vipea', **calculator_params, pop='', parallel=multi_process_sp, job_number=job_number)
+    # Relax at the tight-binding level with xTB, determine zero-point energy and entropy contributions, get charge population
+    # analysis for 2D symmetry checking purposes
+    substrate = single_run(substrate, runtype='ohess vtight', **calculator_params, pop='', parallel=multi_process_sp, job_number=job_number)
     qs = substrate.info['qs']  # charges
 
     # Attach useful information to the substrate object
@@ -65,6 +63,7 @@ def prepare_substrate(smile_string, calculator_params, multi_process_conf=1, mul
     substrate.info['calc_params'] = deepcopy(calculator_params)
     substrate.info['bonds'] = get_neighboring_bonds_list(substrate)
     substrate.info['nonH_count'] = len(nonH_atoms)
+    substrate.info['smi'] = smile_string
     del substrate.info['qs']
 
     return substrate
@@ -88,6 +87,10 @@ def multi_prepare_substrate(smile_string_list, calc_kwargs=None, multi_process=-
     with multiprocessing.Pool(multi_process) as pool:
         substrates_iterator = pool.imap(prepare_substrate_worker, jobs)
         substrates_list, substrates_errors = multiprocessing_run_and_catch(substrates_iterator)
+
+    # Attach smile identifiers
+    substrates_list = [(smile_string_list[indx], sub) for indx, sub in substrates_list]
+    substrates_errors = [(smile_string_list[indx], error) for indx, error in substrates_errors]
 
     job_logger.info(f'finished jobs. Took {time.perf_counter() - start}s')
 

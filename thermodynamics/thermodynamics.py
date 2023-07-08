@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from photocatalysis.thermodynamics.tools import single_run, multi_run
-from photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST, dG4_REST
+from photocatalysis.thermodynamics.constants import dG1_REST, dG2_REST, dG3_REST, dG4_REST, SHE_VACUUM_POTENTIAL
 from photocatalysis.thermodynamics.helpers import get_multi_process_cores, explicitly_broadcast_to, get_logger
 from photocatalysis.adsorption.helpers import multiprocessing_run_and_catch
 
@@ -64,11 +64,13 @@ def global_min_configurations(oh_configs, o_configs, ooh_configs):
     return min_energy_configs
 
 def get_thermodynamics(substrate, oh_configs, o_configs, ooh_configs, multi_processing=None, job_number=0):
-    #  Determine most stable set of intermediates
+    calculator_params = deepcopy(substrate.info['calc_params'])
+
+    # Calculate ionization potential and determine most stable set of intermediates
+    substrate = single_run(substrate, runtype='vipea', **calculator_params, job_number=job_number)
     min_energy_configs = global_min_configurations(oh_configs, o_configs, ooh_configs)
 
-    # Completely optimize them (and perform ZPE/TS calc)
-    calculator_params = deepcopy(substrate.info['calc_params'])
+    # Completely optimize them and perform ZPE/TS calc
     if multi_processing is None:
         # calculator_params.update({'parallel':4})
         # stable = [single_run(config, runtype='opt vtight', job_number=job_number, **calculator_params) for config in min_energy_configs]
@@ -81,6 +83,10 @@ def get_thermodynamics(substrate, oh_configs, o_configs, ooh_configs, multi_proc
         calculator_params.update({'parallel':4})
         oh_stable, o_stable, ooh_stable = multi_run(min_energy_configs, runtype='ohess vtight', calc_kwargs=calculator_params, multi_process=multi_processing)
 
+    # Other quantites
+    driving_potential = substrate.info['ip'] / 1. - SHE_VACUUM_POTENTIAL
+    active_sites = [oh_stable.info['active_site'], o_stable.info['active_site'], ooh_stable.info['active_site']]
+
     ### Free energies of intermediates
     gs = substrate.info['energy'] +  substrate.info['zpe'] - substrate.info['entropy']
     goh = oh_stable.info['energy'] + oh_stable.info['zpe'] - oh_stable.info['entropy']
@@ -92,11 +98,9 @@ def get_thermodynamics(substrate, oh_configs, o_configs, ooh_configs, multi_proc
 
     rate_det_step = G.argmax()
     rate_det_energy = G.max() # basically overpotential
-    ESSI = G[G > 1.23].sum() / G[G > 1.23].size # Electrochemical-Step-Symmetry-Index (similar to Mean Abs Diff)
+    ESSI = G[G > 1.23].sum() / G[G > 1.23].size # Electrochemical-Step-Symmetry-Index (similar to Mean Abs Diff of rxn steps)
 
-    active_sites = [oh_stable.info['active_site'], o_stable.info['active_site'], ooh_stable.info['active_site']]
-
-    return rate_det_energy, active_sites, rate_det_step, ESSI
+    return driving_potential, rate_det_energy, active_sites, rate_det_step, ESSI
 
 def get_thermodynamics_worker(job):
     job_num, job_input = job
@@ -118,6 +122,10 @@ def multi_get_thermodynamics(systems, multi_process=-1):
     with multiprocessing.Pool(multi_process) as pool:
         systems_iterator = pool.imap(get_thermodynamics_worker, jobs)
         systems_properties, systems_errors = multiprocessing_run_and_catch(systems_iterator)
+
+    # Attach smile identifiers
+    systems_properties = [(systems[indx][0].info['smi'], prop) for indx, prop in systems_properties]
+    systems_errors = [(systems[indx][0].info['smi'], e) for indx, e in systems_errors]
 
     job_logger.info(f'finished jobs. Took {time.perf_counter() - start}s')
 

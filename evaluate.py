@@ -1,14 +1,12 @@
-import numpy as np
 from copy import deepcopy
 import time
 import os
-from itertools import repeat
+import traceback
 
 from photocatalysis.adsorption.tools import prepare_substrate, multi_prepare_substrate
 from photocatalysis.adsorption.relaxing import build_and_relax_configurations
 from photocatalysis.thermodynamics.thermodynamics import get_thermodynamics, multi_get_thermodynamics
 
-from photocatalysis.thermodynamics.constants import SHE_VACUUM_POTENTIAL
 from photocatalysis.thermodynamics.helpers import get_logger
 
 def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
@@ -32,8 +30,7 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
 
     ### Rate determining free energy and other quantities
     eval_logger.info('Calculating thermochemical properties')
-    rdg, asites, rds, essi = get_thermodynamics(substrate, oh_configs, o_configs, ooh_configs, multi_processing=3)
-    driving_potential = substrate.info['ip'] / 1. - SHE_VACUUM_POTENTIAL
+    driving_potential, rdg, asites, rds, essi = get_thermodynamics(substrate, oh_configs, o_configs, ooh_configs, multi_processing=3)
 
     if driving_potential > rdg:
         print("Substrate likely suitable for water oxidation")
@@ -46,41 +43,50 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
 
     return driving_potential, rdg, asites, rds, essi
 
-def evaluate_substrate_in_batches(smile_strings, calculator_params, results_folders):
+def evaluate_substrate_in_batches(smile_strings, calculator_params, scratch_dir=None, batch_number=None):
+    ### smile_string which is attched to each substrate is used to identify molecules during each step
+    ### If not smile string, then you could use the folder created for the run as an identifier
+    if scratch_dir is not None:
+        base = os.getcwd()
+        os.chdir(scratch_dir)
+
     eval_logger = get_logger()
 
     ##### Multiprocess and catch substrate prep errors (implicit error handling done with multiprocess.imap)
     print('############################')
-    eval_logger.info(f'PREPARING SUBSTRATES BATCH')
+    eval_logger.info(f'PREPARING SUBSTRATES, BATCH {batch_number}')
 
-    subs, errors = multi_prepare_substrate(smile_strings, calc_kwargs=calculator_params)
-    # process errors here
+    preped_subs, prep_errors = multi_prepare_substrate(smile_strings, calc_kwargs=calculator_params)
+    eval_logger.info(f'FIZZLED: {len(prep_errors)}')
 
     ##### Relax configs in for loop (explicit error handling with try/except block)
     print('############################')
-    eval_logger.info('BUILDING AND RELAXING CONFIGURATIONS BATCH')
+    eval_logger.info(f'BUILDING AND RELAXING CONFIGURATIONS, BATCH {batch_number}')
 
-    systems = []
-    for j, sub in enumerate(subs):
-        print(f'Iter {j}')
+    relaxed_systems = []
+    relax_errors = []
+    for j, (smi, sub) in enumerate(preped_subs):
         try:
             oh, o, ooh = build_and_relax_configurations(sub, sub.info['equivalent_atoms'])
-            systems.append([sub, oh, o, ooh])
+            relaxed_systems.append([sub, oh, o, ooh])
         except Exception as e:
             # process errors here
-            pass
-    
+            relax_errors.append((smi, traceback.format_exc()))
+
+    eval_logger.info(f'FIZZLED: {len(relax_errors)}')    
     ##### Get thermodynamic variables of interest (implicit error handling)
     print('############################')
-    eval_logger.info('THERMODYNAMIC ASSESMENT BATCH')
+    eval_logger.info(f'THERMODYNAMIC ASSESMENT, BATCH {batch_number}')
+    
+    properties, prop_errors = multi_get_thermodynamics(relaxed_systems)
+    eval_logger.info(f'FIZZLED: {len(prop_errors)}') 
 
-    props, errors_props = multi_get_thermodynamics(systems)
-    ips = [s.info['ip'] / 1. - SHE_VACUUM_POTENTIAL for s in subs]
+    print('############################')
+    total_errors = prep_errors + relax_errors + prop_errors
+    eval_logger.info(f'SUCCESSFULLY RAN: {len(smile_strings) - len(total_errors)} / {len(smile_strings)}')
+    eval_logger.info('IP > dGMAX COUNT: {}'.format(sum([prop[0] > prop[1] for _, prop in properties])))
 
-    # Process last bit of errors here
+    if scratch_dir is not None:
+        os.chdir(base)
 
-    # for smi, ip, prop in zip(systems, driving_potentials, properties):
-    #         rdg, asites, rds, essi = prop
-    #         os.system('echo "{} {} {} {} {} {}" >> {}/results_calculations_test.txt'.format(smi, ip, rdg, asites, rds, essi, results_directory))
-
-    #return ips, props
+    return properties, total_errors

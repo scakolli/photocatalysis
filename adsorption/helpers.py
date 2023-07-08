@@ -122,7 +122,7 @@ def multiprocessing_run_and_catch(multiprocessing_iterator):
     while True:
         try:
             result = next(multiprocessing_iterator)
-            results.append(result)
+            results.append((iteration, result))
         except StopIteration:
             break
         except Exception as e:
