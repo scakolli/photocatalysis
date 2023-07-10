@@ -346,6 +346,7 @@ def get_conformers_rdkit(smi, n_cpu=1, max_conformers=-1, rmsd_threshold=0.35, f
                             pool_multiplier=pool_multiplier,
                             print_output=print_output)
     mol = cg(mol)
+    
     atoms_list=[]
     for i in range(mol.GetNumConformers()):
         atoms_list.append(rdkit2ase(mol, confId=i))

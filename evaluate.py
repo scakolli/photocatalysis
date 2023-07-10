@@ -20,13 +20,15 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
 
     ### Prepare substrate
     # Generate FF optimized confs, optimize lowest energy one at the tight binding level, calculate ZPE-TS and IP/EA
-    substrate = prepare_substrate(smile_string, calculator_params, multi_process_conf=4, multi_process_sp=4)
+    substrate = prepare_substrate(smile_string, calculator_params, multi_process_conf=4, multi_process_sp=1)
+    return substrate
     sites = substrate.info['equivalent_atoms']
 
     ### Relax and filter
     # Crude relaxation is sufficient
     eval_logger.info('Building and relaxing configurations')
     oh_configs, o_configs, ooh_configs = build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=-1)
+    return substrate, oh_configs, o_configs, ooh_configs
 
     ### Rate determining free energy and other quantities
     eval_logger.info('Calculating thermochemical properties')
@@ -58,6 +60,7 @@ def evaluate_substrate_in_batches(smile_strings, calculator_params, scratch_dir=
 
     preped_subs, prep_errors = multi_prepare_substrate(smile_strings, calc_kwargs=calculator_params)
     eval_logger.info(f'FIZZLED: {len(prep_errors)}')
+    return preped_subs[0][1]
 
     ##### Relax configs in for loop (explicit error handling with try/except block)
     print('############################')
@@ -66,14 +69,17 @@ def evaluate_substrate_in_batches(smile_strings, calculator_params, scratch_dir=
     relaxed_systems = []
     relax_errors = []
     for j, (smi, sub) in enumerate(preped_subs):
+        print(f'ITER {j}, {smi}')
         try:
             oh, o, ooh = build_and_relax_configurations(sub, sub.info['equivalent_atoms'])
             relaxed_systems.append([sub, oh, o, ooh])
         except Exception as e:
             # process errors here
+            print(f'ERROR IN {smi}')
             relax_errors.append((smi, traceback.format_exc()))
 
-    eval_logger.info(f'FIZZLED: {len(relax_errors)}')    
+    eval_logger.info(f'FIZZLED: {len(relax_errors)}')
+    return sub, oh, o, ooh
     ##### Get thermodynamic variables of interest (implicit error handling)
     print('############################')
     eval_logger.info(f'THERMODYNAMIC ASSESMENT, BATCH {batch_number}')

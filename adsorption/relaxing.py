@@ -10,14 +10,18 @@ from photocatalysis.adsorption.tools import build_configurations
 from photocatalysis.thermodynamics.tools import multi_run
 from photocatalysis.thermodynamics.helpers import create_trajectories_from_logs
 
-def build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=-1):
+def build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=-1, directory=False):
+    if directory:
+        os.mkdir(directory)
+        os.chdir(directory)
+    
     ### Build Configs
     configsOH, configsO, configsOOH = build_configurations(substrate, sites)
     num_configs = len(configsOH) # num configs each, independent of adsorbate
 
     ### Relaxation
     calc_kwargs_sub = deepcopy(substrate.info['calc_params'])
-    configs = multi_run(configsOH+configsO+configsOOH, runtype=f'opt {optlevel}', calc_kwargs=calc_kwargs_sub, multi_process=multi_process)
+    configs = multi_run(configsOH+configsO+configsOOH, runtype=f'opt {optlevel}', calc_kwargs=calc_kwargs_sub, multi_process=multi_process, keep_folders=directory)
     configsoh, configso, configsooh = np.array(configs, dtype='object').reshape(3, num_configs).tolist()
 
     ### Generate additional conformers using ETKGT and FF's, and relax
@@ -28,6 +32,10 @@ def build_and_relax_configurations(substrate, sites, optlevel='loose', multi_pro
     configsoh = filter_configurations(configsoh, substrate)
     configso = filter_configurations(configso, substrate)
     configsooh = filter_configurations(configsooh, substrate)
+    print(len(configsoh), len(configso), len(configsooh))
+
+    if directory:
+        os.chdir('..')
 
     return configsoh, configso, configsooh
 

@@ -1,7 +1,6 @@
 import numpy as np
 from copy import deepcopy
 import multiprocessing
-from functools import partial
 from itertools import repeat
 import time
 
