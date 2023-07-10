@@ -32,7 +32,6 @@ def build_and_relax_configurations(substrate, sites, optlevel='loose', multi_pro
     configsoh = filter_configurations(configsoh, substrate)
     configso = filter_configurations(configso, substrate)
     configsooh = filter_configurations(configsooh, substrate)
-    print(len(configsoh), len(configso), len(configsooh))
 
     if directory:
         os.chdir('..')
