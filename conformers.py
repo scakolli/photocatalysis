@@ -14,13 +14,15 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdMolDescriptors import CalcNumRotatableBonds
 from osc_discovery.cheminformatics.cheminformatics_misc import rdkit2ase
+from copy import deepcopy
 
 
 def _getrmsd(tuple_proc):
     ''' Helper for multiprocessing '''
     mol = tuple_proc[2]
+    probe_mol = deepcopy(mol) # see get_conformer_rmsd(mol).... in any case, multiprocessing wont modify our molecule inplace
     return [tuple_proc[0][0], tuple_proc[0][1], 
-                AllChem.GetBestRMS(mol, mol, tuple_proc[1][0], tuple_proc[1][1]) ]
+                AllChem.GetBestRMS(probe_mol, mol, tuple_proc[1][0], tuple_proc[1][1]) ]
 
 
 class ConformerGenerator(object):
@@ -281,6 +283,11 @@ class ConformerGenerator(object):
     mol : RDKit Mol
         Molecule.
     """
+    # AllChem.GetBestRMS(probe_mol, ref_mol, probe_Id, ref_id)
+    # During the RMS calculation, probe_mol is alligned to ref_mol and left in that state in-place after calculation
+    # create a copy of our molecule to serve as a probe, that way we dont modify it in-place....
+    probe_mol = deepcopy(mol)
+
     from rdkit.Chem import AllChem
     rmsd = np.zeros(
         (mol.GetNumConformers(), mol.GetNumConformers()), dtype=float)
@@ -288,7 +295,7 @@ class ConformerGenerator(object):
       for j, fit_conf in enumerate(mol.GetConformers()):
         if i >= j:
           continue
-        rmsd[i, j] = AllChem.GetBestRMS(mol, mol, ref_conf.GetId(),
+        rmsd[i, j] = AllChem.GetBestRMS(probe_mol, mol, ref_conf.GetId(),
                                         fit_conf.GetId())
         rmsd[j, i] = rmsd[i, j]
     return rmsd
@@ -345,8 +352,9 @@ def get_conformers_rdkit(smi, n_cpu=1, max_conformers=-1, rmsd_threshold=0.35, f
                             rmsd_threshold=rmsd_threshold, force_field=ff, 
                             pool_multiplier=pool_multiplier,
                             print_output=print_output)
+    # return mol, cg # DEBUGGIG
     mol = cg(mol)
-    
+
     atoms_list=[]
     for i in range(mol.GetNumConformers()):
         atoms_list.append(rdkit2ase(mol, confId=i))
