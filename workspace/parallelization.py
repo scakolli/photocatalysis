@@ -4,41 +4,55 @@
 from photocatalysis.evaluate import evaluate_substrate_in_batches, evaluate_substrate
 # from itertools import repeat
 import time
-import sys
-import traceback
+# import sys
+# import traceback
 from copy import deepcopy
+import numpy as np
+import pandas as pd
 
-smile_string_list = ['C1=CC(c2cc(C=Cc3ncns3)cc(C3=CCC=C3)n2)=CC1',
- 'C1=CCC(c2cc(C3=CC=CC3)cc(-c3cc[nH]c3)c2)=C1',
- 'C1=CCC(c2ccnnc2-c2nnccc2C2=CC=CC2)=C1',
- 'C(#Cc1cc(C#CC2=CCN=C2)cc(-c2cc[nH]n2)c1)C1=CCN=C1']
- 'C1=CCC(C=Cc2cccc(C=CC3=CC=CC3)c2-c2ccsc2)=C1',
- 'C1=CC(=C2C(C=Cc3ccncc3)=CC=C2C=Cc2ccncc2)N=N1',
- 'O=c1[nH]c2ccoc2c2c1N=CC2=C1C=CC=C1',
- 'O=C1Cc2n[nH]c3cc(=C4C=CC=C4)cc-3c2=N1']
+############# Read in #############
+path = '/home/btpq/bt308495/Thesis/osc_discovery/data/df_chemical_space_chons_4rings.json'
+p = pd.read_json(path, orient='split')
 
-nbatch = len(smile_string_list)
+rand_smi = np.random.randint(0, 315450, size=64)
+
+# Smiles to process
+smile_string_list = p.molecule_smiles.iloc[rand_smi].tolist()
+
 scratch_dir = '/home/btpq/bt308495/Thesis/scratch'
 calc_kwargs = {'gfn':2, 'acc':0.2, 'etemp':298.15, 'strict':'', 'gbsa':'water'}
+
+################ SERIAL VS PARALLEL ########################
+
+# Parallel
+start_parallel = time.perf_counter()
+id_props, props_errors = evaluate_substrate_in_batches(smile_string_list, calc_kwargs, scratch_dir=scratch_dir)
+end_parallel = time.perf_counter()
+print('Parallel Took:', end_parallel - start_parallel)
 
 # Serial
 start = time.perf_counter()
 props_test = []
-for smile in smile_string_list:
-    props_test.append(evaluate_substrate(smile, calc_kwargs, scratch_dir=scratch_dir))
+for j, smile in enumerate(smile_string_list):
+    try:
+        props_test.append(evaluate_substrate(smile, calc_kwargs, scratch_dir=scratch_dir))
+    except:
+        props_test.append(np.nan)
 end = time.perf_counter()
 
-# # Parallel
-start_parallel = time.perf_counter()
-id_props, props_errors = evaluate_substrate_in_batches(smile_string_list, calc_kwargs, scratch_dir=scratch_dir)
-end_parallel = time.perf_counter()
-
+print('########################')
 print('Serial Took:', end - start)
 print('Parallel Took:', end_parallel - start_parallel)
 
 props = [prop for _, prop in id_props]
 ips = [(p[0], pt[0]) for p, pt in zip(props, props_test)]
 rdgs = [(p[1], pt[1]) for p, pt in zip(props, props_test)]
+
+
+print('#############PROPS##############')
+print(ips)
+print('################')
+print(rdgs)
 
 ################### MULTIPROCESSING ################################
 

@@ -309,7 +309,10 @@ class base_learner():
             for line in out.readlines():
                 line=line.split()
                 smi=line[0]
-                props=[float(x) for x in line[1:]]
+                props=[float(x) for x in line[1:3]]
+                # ADD CODE for processing additional properties in the results file
+                # or do so manually outside of learners_treesearch 
+                # extra_props = [x for x in line[2:]]
                 dict_res[smi]=props
         return dict_res
 
@@ -1074,3 +1077,20 @@ def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect'):
                                                             kernel_params['sigma_n'],
                                                             max(df_population_unique['added_in_round'].tolist()) ))
     return gpr, X_train, kernel_params
+
+def get_results():
+        ''' Parse the results_calculations.txt file '''
+        res_file = 'molecules_to_calculate_results/results_calculations.txt'
+        if not os.path.isfile(res_file): return {}
+        
+        dict_res={}
+        with open('molecules_to_calculate_results/results_calculations.txt') as out:
+            for line in out.readlines():
+                line=line.split()
+                smi=line[0]
+                props=[float(x) for x in line[1:3]]
+                # ADD CODE for processing additional properties in the results file
+                # or do so manually outside of learners_treesearch 
+                # extra_props = [x for x in line[3:]]
+                dict_res[smi]=props
+        return dict_res

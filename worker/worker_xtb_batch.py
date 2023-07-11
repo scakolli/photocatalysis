@@ -35,7 +35,7 @@ from photocatalysis.evaluate import evaluate_substrate_in_batches
 ########################## XTB/FOLDER PARAMETERS ###################################
 # SCRIPT = '/home/btpq/bt308495/Thesis/photocatalysis/worker/calc_xtb.py'
 CALC_PARAMS = {'gfn':2, 'acc':0.2, 'etemp':298.15, 'gbsa':'water'}
-NBATCH = 50
+NBATCH = 128
 SCRATCH_DIR = '/home/btpq/bt308495/Thesis/scratch'
 
 ########################## RUN ###################################
@@ -111,5 +111,3 @@ if __name__ == '__main__':
             os.system("mv {} {}".format(ref_dict[smi], new_results_path))
 
         print('Batch Evaluation Took:', time.perf_counter() - start)
-
-        break

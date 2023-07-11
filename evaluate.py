@@ -20,7 +20,7 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
 
     ### Prepare substrate
     # Generate FF optimized confs, optimize lowest energy one at the tight binding level, calculate ZPE-TS and IP/EA
-    substrate = prepare_substrate(smile_string, calculator_params, multi_process_conf=4, multi_process_sp=1)
+    substrate = prepare_substrate(smile_string, calculator_params, multi_process_conf=4, multi_process_sp=4)
     sites = substrate.info['equivalent_atoms']
 
     ### Relax and filter
@@ -66,7 +66,7 @@ def evaluate_substrate_in_batches(smile_strings, calculator_params, scratch_dir=
     relaxed_systems = []
     relax_errors = []
     for j, (smi, sub) in enumerate(preped_subs):
-        print(f'ITER {j}, {smi}')
+        print(f'\n ITER {j}, {smi}')
         try:
             oh, o, ooh = build_and_relax_configurations(sub, sub.info['equivalent_atoms'])
             relaxed_systems.append([sub, oh, o, ooh])
