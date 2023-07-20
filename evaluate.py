@@ -2,6 +2,7 @@ from copy import deepcopy
 import time
 import os
 import traceback
+import sys
 
 from photocatalysis.adsorption.tools import prepare_substrate, multi_prepare_substrate
 from photocatalysis.adsorption.relaxing import build_and_relax_configurations
@@ -59,6 +60,13 @@ def evaluate_substrate_in_batches(smile_strings, calculator_params, scratch_dir=
     preped_subs, prep_errors = multi_prepare_substrate(smile_strings, calc_kwargs=calculator_params)
     eval_logger.info(f'FIZZLED: {len(prep_errors)}')
 
+    # for i, error in prep_errors:
+    #     print(i)
+    #     print(error)
+    #     print('###############')
+    
+    # return 0
+
     ##### Relax configs in for loop (explicit error handling with try/except block)
     print('############################')
     eval_logger.info(f'BUILDING AND RELAXING CONFIGURATIONS, BATCH {batch_number}')
@@ -66,7 +74,7 @@ def evaluate_substrate_in_batches(smile_strings, calculator_params, scratch_dir=
     relaxed_systems = []
     relax_errors = []
     for j, (smi, sub) in enumerate(preped_subs):
-        print(f'\n ITER {j}, {smi}')
+        print(f'\n BATCH {batch_number}, ITER {j}: {smi}')
         try:
             oh, o, ooh = build_and_relax_configurations(sub, sub.info['equivalent_atoms'])
             relaxed_systems.append([sub, oh, o, ooh])

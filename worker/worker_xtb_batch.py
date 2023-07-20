@@ -35,7 +35,7 @@ from photocatalysis.evaluate import evaluate_substrate_in_batches
 ########################## XTB/FOLDER PARAMETERS ###################################
 # SCRIPT = '/home/btpq/bt308495/Thesis/photocatalysis/worker/calc_xtb.py'
 CALC_PARAMS = {'gfn':2, 'acc':0.2, 'etemp':298.15, 'gbsa':'water'}
-NBATCH = 128
+NBATCH = 256
 SCRATCH_DIR = '/home/btpq/bt308495/Thesis/scratch'
 
 ########################## RUN ###################################
@@ -73,10 +73,10 @@ if __name__ == '__main__':
     total_num_systems = len(systems_cif_dir_to_calc)
 
     batches = get_batches(systems_cif_dir_to_calc, NBATCH)
-
-    start = time.perf_counter()
+    num_batches = len(batches)
 
     for b_num, b in enumerate(batches):
+        start = time.perf_counter()
         ref_dict = {}
         for system_to_calculate in b:
             path_system_to_calculate = os.path.join(cif_directory, system_to_calculate)
@@ -90,11 +90,11 @@ if __name__ == '__main__':
         
 
         print('############################')
-        print(f'BATCH {b_num} / {len(batches)}')
+        print(f'BATCH {b_num} / {num_batches-1}')
         print(f'Molecules to process: {len(b)}')
 
         systems = deepcopy(list(ref_dict.keys()))
-        properties, errors = evaluate_substrate_in_batches(systems, CALC_PARAMS, scratch_dir=SCRATCH_DIR, batch_number=b_num)
+        properties, errors = evaluate_substrate_in_batches(systems, CALC_PARAMS, scratch_dir=SCRATCH_DIR, batch_number=f'{b_num} / {num_batches-1}')
 
         ### Successful
         for smi, prop in properties:
@@ -110,4 +110,6 @@ if __name__ == '__main__':
             os.system("echo '{}' >> {}/errors.txt".format(e, ref_dict[smi]))
             os.system("mv {} {}".format(ref_dict[smi], new_results_path))
 
-        print('Batch Evaluation Took:', time.perf_counter() - start)
+        time_took = time.perf_counter() - start
+        print('Batch Evaluation Took:', time_took)
+        os.system("echo '{} {}' >> batch_times.txt".format(b_num, time_took))

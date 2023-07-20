@@ -177,7 +177,7 @@ class base_learner():
         self._generate_ml_vectors(self.df_population_unique)
         
         # Removing older worker directory and changing into the cleaned one
-        os.system('rm -r {}'.format(dir_save_results))
+        # os.system('rm -r {}'.format(dir_save_results))
         os.mkdir(dir_save_results)
         os.chdir(dir_save_results)
         os.system('echo "{}" > hostname.txt'.format(socket.gethostname()))
@@ -296,6 +296,7 @@ class base_learner():
                         run_count += 1                 
         
         if run_count>0 and not self.check_all_calculations_finished():
+            print('SUBMITING WORKER')
             self._submit_worker()
 
 
@@ -1026,6 +1027,11 @@ def get_unique_population(dframe):
 def get_population_completed(dframe):
     return dframe.copy()[dframe.calc_status=='completed']
 
+def get_population_completed_or_fizzled(dframe):
+    ''' Utility function: Return all completed calculations '''
+    df = dframe.copy()
+    return df[(df.calc_status=='completed') | (df.calc_status=='fizzled')]
+
 def generate_ml_vectors(dframe, ml_rep_field='morgan_fp_bitvect'):
         """ Helper: Add ML-vectors to dataframe """
         df = dframe.copy()
@@ -1078,6 +1084,13 @@ def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect'):
                                                             max(df_population_unique['added_in_round'].tolist()) ))
     return gpr, X_train, kernel_params
 
+def get_utility(y, std=None, kappa=-1., return_array=False):
+        ## Adapted for photocatalysis
+        if std is None: std = np.array([])
+        if kappa < 0: kappa = kappa
+
+        return F_acqusition(y, std, kappa, return_array=return_array)
+
 def get_results():
         ''' Parse the results_calculations.txt file '''
         res_file = 'molecules_to_calculate_results/results_calculations.txt'
@@ -1094,3 +1107,103 @@ def get_results():
                 # extra_props = [x for x in line[3:]]
                 dict_res[smi]=props
         return dict_res
+
+def check_all_calculations_finished_outside(dframe, Nbatch_first, Nbatch_finish_successful, read=True):
+    ''' Check which batch calculations are still open '''
+    if read:
+        update_population_frame()
+    
+    df_finished_population_unique = get_population_completed_or_fizzled(dframe)
+    df_population_unique = get_unique_population(dframe)
+
+    if df_finished_population_unique.shape[0] != df_population_unique.shape[0]:
+            # How many calculations can be left_todo, before proceeding... useful for HPC parallel processing across
+            # multiple nodes. If theres only 10 left todo, better not leave all the compute nodes idle while we process
+            # these 10... lets already begin fetching the next batch. In our case, with 1 local compute node, this is not
+            # necessary, resulting code is redundant and you can basically ignore since threshold = 0 always, when Nbatch_finish_successful = 0
+
+        threshold = Nbatch_first - Nbatch_finish_successful
+        left_todo = df_population_unique.shape[0] - df_finished_population_unique.shape[0]
+
+        if left_todo > threshold:
+            if read:
+                print('Finished Systems, Total Systems: {} , {}'.format(df_finished_population_unique.shape[0], df_population_unique.shape[0]))
+                print('Systems to run: {}'.format(left_todo))
+
+            if Nbatch_finish_successful!=-1:
+                if read:
+                    print('Threshold value to proceed: {}'.format(threshold))
+            return False
+    
+    print('Finished, saving frame to {}'.format(os.path.join(os.getcwd(), 'df_population.json')))
+    if read:
+        df_population_unique.to_json('df_population.json', orient='split')
+    return True
+
+def update_population_frame(df_population_unique_main, Nbatch_first, Nbatch_finish_successful, kappa):
+        ''' Reads results from the output-directory (molecules_to_calculate_results) and updates the population frame. '''
+        df_population_unique = df_population_unique_main.copy()
+        properties = ["IP", "dGmax"]
+        utility_function_name = 'utility_function'
+        
+        if not os.path.isdir('molecules_to_calculate_results'):
+            # Initial check in the beginning of the run, when no calcs have been done
+            print('no results directory, resuming')
+            return None    
+        
+        ### Running/fizzled
+        # update frame calc_status
+        res_files = [x for x in os.listdir('molecules_to_calculate_results')]
+        fizzled = [ int(x.split('.')[0].split('mol_')[-1]) for i,x in enumerate(res_files) if '__fizzled' in x]
+        running = [ int(x.split('.')[0].split('mol_')[-1]) for i,x in enumerate(res_files) if '__running' in x]
+        
+        smi_fizzled = [ open('molecules_to_calculate/mol_{}.smi'.format(idx)).read() for idx in fizzled ]
+        smi_running = [ open('molecules_to_calculate/mol_{}.smi'.format(idx)).read() for idx in running ]
+        
+        for i,fizz_idx in enumerate(fizzled):
+            df_sel = df_population_unique[df_population_unique.molecule_smiles==smi_fizzled[i]]
+            if df_sel.shape[0]==0: continue
+            if df_sel.calc_status.values[0]=='fizzled': continue
+            for j, row in df_sel.iterrows():
+                df_population_unique.at[j,'calc_status']='fizzled'
+                            
+        for i,run_idx in enumerate(running):
+            df_sel = df_population_unique[df_population_unique.molecule_smiles==smi_running[i]]
+            if df_sel.shape[0]==0: continue
+            if df_sel.calc_status.values[0]=='running': continue
+            for j, row in df_sel.iterrows():
+                df_population_unique.at[j, 'calc_status']='running'   
+
+        ### Completed
+        # update frame calc_status as well as properties. If no results exist, exit.
+        if not os.path.isfile('molecules_to_calculate_results/results_calculations.txt'):
+            # No completed mols
+            print('no results file, resuming')
+            return None
+        else:
+            # read results file
+            dict_results = get_results()
+
+        print('Completed before:', df_population_unique[df_population_unique.calc_status!='completed'].shape[0])
+        for i,row in df_population_unique[df_population_unique.calc_status!='completed'].iterrows():
+            if not row.molecule_smiles in dict_results.keys():
+                # No results for this mol
+                continue
+            if check_all_calculations_finished_outside(df_population_unique, Nbatch_first, Nbatch_finish_successful, read=False):
+                # Update all 'completed' mols
+                break
+
+            df_population_unique.at[i, 'calc_status']='completed'
+            df_population_unique.at[i, 'finished_in_round']=df_population_unique.at[i, 'added_in_round'] ## MODIFIED
+
+            for j, p in enumerate(dict_results[row.molecule_smiles]):
+                df_population_unique.at[i, str(properties[j])] = p
+
+        print('Completed after:', df_population_unique[df_population_unique.calc_status!='completed'].shape[0])
+                
+        # compute utility
+        # y = [self.df_population_unique[prop].tolist() for prop in self.properties]
+        y = df_population_unique[properties].values.T
+        df_population_unique[utility_function_name] = get_utility(y, kappa=kappa)
+
+        return df_population_unique
