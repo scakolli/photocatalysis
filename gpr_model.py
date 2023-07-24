@@ -35,7 +35,7 @@ class Kernel_method():
     def _is_pos_def(self, K):
         return np.all(np.linalg.eigvals(K) >= 0.)
 
-    def fit(self, X_train, y_train, refit=False):
+    def fit(self, X_train, y_train, refit=False, multiprocess=1):
         dmat_loc = os.path.join(self.D_scratch_dir, 'D_mat.npy')
         if os.path.isfile(dmat_loc):
             D=np.load(dmat_loc)
@@ -43,7 +43,9 @@ class Kernel_method():
                 D=self.distance_matrix(X_train)
                 np.save(dmat_loc,D)
         else:
+            print('DISTANCE MATRIX')
             D = self.distance_matrix(X_train)
+            print('DISTANCE MATRIX DONE')
             np.save(dmat_loc,D)
         
         self.X_train = X_train
@@ -191,11 +193,13 @@ def _run_gpr_fit_bayesian_opt(X_train, y_train, gprx, starting_values=[1.0, 1., 
     i=0 
     for nit in range(niter_local):
 
-        def log_marginal_likelihood_target_localopt(x, verbose=False):
+        def log_marginal_likelihood_target_localopt(x, verbose=True):
             nonlocal X_train, y_train, i, gprx
             i+=1
             gprx.set_kernel_params(x[0], x[1], x[2])
+            print('FITTING')
             gprx.fit(X_train,y_train)
+            print('LOGMARGLIKELIHOOD')
             log,gradlog=gprx.log_marginal_likelihood(eval_gradient=True)
             if verbose: print('localopt',i, x, log, gradlog)
             return -log, -gradlog

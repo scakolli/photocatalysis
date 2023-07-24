@@ -1054,7 +1054,7 @@ def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect'):
     
     print('')
     print('Fitting property: {}'.format(prop_name))
-    print('Size of fitting set for ML model (_get_ML_model): {}'.format(df_population_unique.shape[0]))
+    print('Size of fitting set for ML model (get_ML_model): {}'.format(df_population_unique.shape[0]))
     
     X_train = df_population_unique[ml_rep_field].values
     y_train = df_population_unique[prop_name].values
