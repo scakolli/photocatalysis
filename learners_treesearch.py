@@ -23,7 +23,7 @@ cheminformatics_helpers.only_use_brute_force_code=False
 from osc_discovery.acquisition_function import get_F, linear_correct_to_b3lyp
 from photocatalysis.acquisition_function import F_acqusition
 from photocatalysis.gpr_model import GPR_tanimoto, _run_gpr_fit_bayesian_opt
-from photocatalysis import visualization_helpers
+# from photocatalysis import visualization_helpers
 
 # print(operations_typical_osc_design.keys())
 
