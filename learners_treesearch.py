@@ -23,6 +23,7 @@ cheminformatics_helpers.only_use_brute_force_code=False
 from osc_discovery.acquisition_function import get_F, linear_correct_to_b3lyp
 from photocatalysis.acquisition_function import F_acqusition
 from photocatalysis.gpr_model import GPR_tanimoto, _run_gpr_fit_bayesian_opt
+from rdkit.DataStructs.cDataStructs import BulkTanimotoSimilarity
 # from photocatalysis import visualization_helpers
 
 # print(operations_typical_osc_design.keys())
@@ -1047,7 +1048,7 @@ def generate_ml_vectors(dframe, ml_rep_field='morgan_fp_bitvect'):
         
         return df   
     
-def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect'):
+def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect', multiprocess=1, D_scratch_dir='scratch_distance_matrix', niter_local=5):
     """ Helper: Fit ML model on one property of the current population frame"""
     df_population_unique = get_unique_population(get_population_completed(dframe))
     df_population_unique = generate_ml_vectors(df_population_unique)
@@ -1060,9 +1061,8 @@ def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect'):
     y_train = df_population_unique[prop_name].values
     
     kernel_params = {'C':1., 'length_scale':1., 'sigma_n':0.1}
-    niter_local=5
 
-    gpr = GPR_tanimoto()
+    gpr = GPR_tanimoto(multiprocess=multiprocess, D_scratch_dir=D_scratch_dir)
     gpr = _run_gpr_fit_bayesian_opt(X_train, y_train, gpr, 
                                     starting_values=[kernel_params['C'], 
                                                     kernel_params['length_scale'],

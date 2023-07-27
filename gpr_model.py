@@ -3,23 +3,26 @@ sys.path.append('..')
 import numpy as np
 from scipy.linalg import cholesky, cho_solve, solve_triangular
 from scipy.optimize import minimize
-from rdkit.DataStructs import TanimotoSimilarity, BulkTanimotoSimilarity
 from photocatalysis.cheminformatics_fingerprint import get_tanimoto_distmat
+from rdkit.DataStructs import TanimotoSimilarity, BulkTanimotoSimilarity
 
 """ Implements GPR model in simple classes """
 
 class Kernel_method():
     """ A generic Kernel-method base-class """
     
-    def __init__(self, constant_kernel=1.0, gamma_kernel=1., sigma_white=0.5, input_type="soap", use_custom=True):
+    def __init__(self, constant_kernel=1.0, gamma_kernel=1., sigma_white=0.5, input_type="soap", use_custom=True, multiprocess=1, D_scratch_dir="scratch_distance_matrix"):
         self.input_type = input_type
         self.set_kernel_params(constant_kernel, gamma_kernel, sigma_white)
         self.use_custom = use_custom
+        self.multiprocess = multiprocess
         self.X_train=[]
         D=[]
-        self.D_scratch_dir = 'scratch_distance_matrix'
+        self.D_scratch_dir = D_scratch_dir
         if not os.path.isdir(self.D_scratch_dir): os.mkdir(self.D_scratch_dir)
         self.normalize_y = True
+
+        print('Number of cores to be used:', self.multiprocess)
         
     def set_kernel_params(self, constant_kernel, gamma_kernel, sigma_white):
         self.constant_kernel=constant_kernel
@@ -27,7 +30,7 @@ class Kernel_method():
         self.sigma_white=sigma_white
         
     def distance_matrix(self, X1, X2=[]):
-        return get_tanimoto_distmat(X1, X2)    
+        return get_tanimoto_distmat(X1, X2, multiprocess=self.multiprocess)    
 
     def predict(self, X_test):
         print('Property not implemented, use derived class model')
@@ -35,17 +38,17 @@ class Kernel_method():
     def _is_pos_def(self, K):
         return np.all(np.linalg.eigvals(K) >= 0.)
 
-    def fit(self, X_train, y_train, refit=False, multiprocess=1):
+    def fit(self, X_train, y_train, refit=False):
         dmat_loc = os.path.join(self.D_scratch_dir, 'D_mat.npy')
         if os.path.isfile(dmat_loc):
             D=np.load(dmat_loc)
             if not D.shape[0]==len(X_train):
                 D=self.distance_matrix(X_train)
+                # D = get_tanimoto_distmat(X_train, multiprocess=self.multiprocess)
                 np.save(dmat_loc,D)
         else:
-            print('DISTANCE MATRIX')
             D = self.distance_matrix(X_train)
-            print('DISTANCE MATRIX DONE')
+            # D = get_tanimoto_distmat(X_train, multiprocess=self.multiprocess)
             np.save(dmat_loc,D)
         
         self.X_train = X_train
@@ -87,14 +90,17 @@ class GPR_base(Kernel_method):
         if os.path.isfile(d_star_mat_loc):
             D_star=np.load(d_star_mat_loc)
             if D_star.shape[0]!=len(X_test) or D_star.shape[1]!=len(self.X_train):
-                D_star = self.distance_matrix(X_test, self.X_train) 
+                D_star = self.distance_matrix(X_test, self.X_train)
+                # D_star = get_tanimoto_distmat(X_test, self.X_train, multiprocess=self.multiprocess)
         else:
-            D_star = self.distance_matrix(X_test, self.X_train) 
+            D_star = self.distance_matrix(X_test, self.X_train)
+            # D_star = get_tanimoto_distmat(X_test, self.X_train, multiprocess=self.multiprocess)
         np.save(d_star_mat_loc, D_star)       
                 
         K_star = self.get_kernel(D_star)
         self.K_star=K_star # rm
         K_star_star = self.get_kernel(np.array([self.distance_matrix([x],[x])[0][0] for x in X_test])) #+ self.sigma_white**2
+        # K_star_star = self.get_kernel(np.array([get_tanimoto_distmat([x],[x], multiprocess=self.multiproces)[0][0] for x in X_test])) #+ self.sigma_white**2
         
         y_star = np.dot(np.dot(K_star, self.K_inv), self.y_train) 
         if self.normalize_y: y_star = self._y_train_std * y_star + self._y_train_mean # undo normalization
@@ -156,7 +162,7 @@ class GPR_tanimoto(GPR_base):
 
         
     def distance_matrix(self, X1, X2=[]):       
-        return get_tanimoto_distmat(X1, X2)    
+        return get_tanimoto_distmat(X1, X2, multiprocess=self.multiprocess)    
     
     
     def get_kernel(self, dist):
@@ -197,9 +203,7 @@ def _run_gpr_fit_bayesian_opt(X_train, y_train, gprx, starting_values=[1.0, 1., 
             nonlocal X_train, y_train, i, gprx
             i+=1
             gprx.set_kernel_params(x[0], x[1], x[2])
-            print('FITTING')
             gprx.fit(X_train,y_train)
-            print('LOGMARGLIKELIHOOD')
             log,gradlog=gprx.log_marginal_likelihood(eval_gradient=True)
             if verbose: print('localopt',i, x, log, gradlog)
             return -log, -gradlog
