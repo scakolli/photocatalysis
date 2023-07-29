@@ -1,4 +1,9 @@
 import os, time, socket, shutil, random, subprocess
+
+# For fitting large ML models, we need to speed up matrix solving which can be done by setting the number of threads
+# before numpy/scipy is imported... this may confilct with submit_workers, where XTB evaluation requires OMP_NUM_THREADS=1 for optimal performance
+# os.environ['OMP_NUM_THREADS']='16'
+
 import numpy as np
 import pandas as pd
 from copy import deepcopy
@@ -1046,7 +1051,24 @@ def generate_ml_vectors(dframe, ml_rep_field='morgan_fp_bitvect'):
         df[ml_rep_field] = df[ml_rep_field].astype(object)
         df[ml_rep_field] = fps
         
-        return df   
+        return df
+
+def ML_model(dframe, prop_name, kernel_parameters, ml_rep_field='morgan_fp_bitvect', multiprocess=1,  D_scratch_dir='scratch_distance_matrix'):
+    # Preprocessing
+    dframe = get_unique_population(get_population_completed(dframe))
+    dframe = generate_ml_vectors(dframe)
+
+    X = dframe[ml_rep_field].values
+    y = dframe[prop_name].values
+
+    # Define model with kernel params
+    GPR = GPR_tanimoto(multiprocess=multiprocess, D_scratch_dir=D_scratch_dir)
+    GPR.set_kernel_params(*kernel_parameters.values())
+
+    # Fit model
+    GPR.fit(X, y)
+
+    return GPR
     
 def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect', multiprocess=1, D_scratch_dir='scratch_distance_matrix', niter_local=5):
     """ Helper: Fit ML model on one property of the current population frame"""
@@ -1071,6 +1093,9 @@ def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect', multiproce
     kernel_params['C'] = gpr.constant_kernel
     kernel_params['length_scale'] = gpr.gamma_kernel
     kernel_params['sigma_n'] = gpr.sigma_white      
+
+    print('Optimal Kernel Parameters:')
+    print(kernel_params)
     
     os.system('echo "{} {} {} {} {}" >> kernel_params.txt'.format(kernel_params['C'],
                                                                 kernel_params['length_scale'],
@@ -1081,7 +1106,7 @@ def get_ML_model(dframe, prop_name, ml_rep_field='morgan_fp_bitvect', multiproce
     print('Fitted Kernel c {} rbf {} sigma {} Round: {}'.format(kernel_params['C'],
                                                             kernel_params['length_scale'],
                                                             kernel_params['sigma_n'],
-                                                            max(df_population_unique['added_in_round'].tolist()) ))
+                                                            max(df_population_unique['added_in_round'].tolist())))
     return gpr, X_train, kernel_params
 
 def get_utility(y, std=None, kappa=-1., return_array=False):
