@@ -17,6 +17,8 @@ def get_hashed_morgan_count_fingerprint(mol, radius=2, size=2048):
 
 def get_tanimoto_distmat(X1, X2=[], pairwise=False):
     ''' SINGLE CORE PROCESSING Fast wrapper to calculate the Soergel distance matrix '''
+    assert isinstance(X1, list), f'X1 is of type {type(X1)}. Must be pythonic list'
+    assert isinstance(X2, list), f'X1 is of type {type(X2)}. Must be pythonic list'
 
     sim_mat  =  []
     if not len(X2):
@@ -47,7 +49,9 @@ def BulkTanimotoSimilarity_worker(job):
 def get_tanimoto_distmat_multiprocessing(X1, X2=[], multiprocess=1):
     ''' MULTI CORE PROCESSING Fast wrapper to calculate the Soergel distance matrix '''
     # Must be called as a subprocess to ensure picklability of 'BulkTanimotoSimilarity'
-
+    assert isinstance(X1, list), f'X1 is of type {type(X1)}. Must be pythonic list'
+    assert isinstance(X2, list), f'X1 is of type {type(X2)}. Must be pythonic list'
+    
     sim_mat  =  []
     if not len(X2):
         # Multiprocessing

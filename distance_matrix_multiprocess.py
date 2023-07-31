@@ -12,5 +12,5 @@ if __name__ == '__main__':
 
     D = get_tanimoto_distmat_multiprocessing(X1, X2, multiprocess=multiprocess)
     
-    print(dmat_loc, multiprocess)
+    print(f'Saved to : {dmat_loc}')
     np.save(dmat_loc, D)

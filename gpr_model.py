@@ -103,7 +103,7 @@ class Kernel_method():
         L_inv = solve_triangular(self.L.T, np.eye(self.L.shape[0]))
         L_inv_T = L_inv.copy().T # Takes up additionally memory, but allows for parallel dot product evaluation
         self.K_inv = L_inv.dot(L_inv_T)
-        del L_inv_T # save some memory
+        # del L_inv_T # save some memory # deleted anyways after function is ran
 
         print(f'######### Finished Fitting GPR Model. Took {(time.perf_counter() - start) / 60.0} mins #########')
                
@@ -207,13 +207,17 @@ class GPR_tanimoto(GPR_base):
     #     return get_tanimoto_distmat(X1, X2)
 
     def distance_matrix_pairwise(self, X1, X2=[]):
+        X1 = list(X1)
+        X2 = list(X2)
         return get_tanimoto_distmat(X1, X2, pairwise=True) 
 
     def distance_matrix(self, X1, X2=[], matrix_dest_loc=None):
+        X1 = list(X1)
+        X2 = list(X2)
 
         if (self.multiprocess == 1) or (len(X1) < 1000):
             # Better to process small vectors with a single core
-            return get_tanimoto_distmat(X1, X2)    
+            return get_tanimoto_distmat(X1, X2)  
         else:
             # Write information
             if matrix_dest_loc is None:
@@ -229,7 +233,7 @@ class GPR_tanimoto(GPR_base):
             Dist_mat = np.load(matrix_dest_loc)
 
             ### Code to remove scratch.npy... somehow
-            
+
             return Dist_mat   
     
     
@@ -272,6 +276,7 @@ def _run_gpr_fit_bayesian_opt(X_train, y_train, gprx, starting_values=[1.0, 1., 
             if verbose: print(f'################## localopt {i} ##################')
 
             i+=1
+            os.system(f'echo "{i} {x[0]} {x[1]} {x[2]}" >> kernel_params_local_opt.txt')
             gprx.set_kernel_params(x[0], x[1], x[2])
             gprx.fit(X_train,y_train)
             log,gradlog=gprx.log_marginal_likelihood(eval_gradient=True)
@@ -291,7 +296,6 @@ def _run_gpr_fit_bayesian_opt(X_train, y_train, gprx, starting_values=[1.0, 1., 
         print('\n initial guess',starting_values)
         res = minimize(log_marginal_likelihood_target_localopt, 
                    starting_values,
-                   args=(X_train, y_train, gprx),
                    method="L-BFGS-B", jac=True, options={'eps':1e-5}, 
                    bounds=[pbounds["c"], pbounds["rbf"], pbounds["alpha"]])
         print('Local (L-BFGS-B) opt {} finished'.format(nit), res['fun'], res['x'])
