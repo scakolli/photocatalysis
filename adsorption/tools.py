@@ -113,12 +113,38 @@ def get_adsorbate_conformers(molecule, numConfs=10, numThreads=4, return_all=Fal
 def build_configuration_from_site(adsorbate, substrate, site, f=1.4):
     """Build a list of rudimentary adsorbate/substrate configurations on a proposed active site"""
     a, s = adsorbate.copy(), substrate.copy()
+    config_list = []
+
+    if isinstance(site, list):
+        assert len(site) == 2, 'build_config from more than 3 sites...??? Misbehavior'
+        # Oxygen bonded to 2 atoms
+        p = s[site].positions.mean(axis=0)
+
+        # Pick 1 site
+        s0 = site[0]
+        p_center = s[s0].position
+        bs = s.info['bonds'][s0]
+        b = [[b for b in bs if b not in site][0]] + [site[1]] # One non-O- and one O-bonded atom index
+
+        diff = s[b].positions - p_center
+        cross = np.cross(diff[0], diff[1])
+        n = cross / np.linalg.norm(cross)
+
+        if len(a) > 1:
+            a.rotate(a[1].position, n)
+
+        a.translate(p + n * f)
+
+        s.info.clear() #else, you attach s.info to composites and thats unnecessary baggage during computations
+        composite = s + a
+        config_list.append(composite)
+
+        return config_list
 
     # Proposed active site position and indices of neighboring bonded atoms
     # where len(b) is the bond order of atom
     p = s[site].position
     b = s.info['bonds'][site]
-    config_list = []
 
     if (s[site].symbol == 'N') and (len(b) == 3):
         # Ignore Tertiary Nitrogens... specifically the Hbonded N's need to not be considered....

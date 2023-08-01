@@ -1039,19 +1039,23 @@ def get_population_completed_or_fizzled(dframe):
     return df[(df.calc_status=='completed') | (df.calc_status=='fizzled')]
 
 def generate_ml_vectors(dframe, ml_rep_field='morgan_fp_bitvect'):
-        """ Helper: Add ML-vectors to dataframe """
-        df = dframe.copy()
+    """ Helper: Add ML-vectors to dataframe """
+    df = dframe.copy()
 
-        fp_radius = 2 
+    fp_radius = 2
+    if ml_rep_field == 'morgan_fp_bitvect': 
         fps=[]
         for i,row in df.iterrows():
             fps.append(AllChem.GetMorganFingerprint(Chem.MolFromSmiles(row.molecule_smiles), fp_radius))
-                        
-        df[ml_rep_field] = [[]] * df.shape[0]
-        df[ml_rep_field] = df[ml_rep_field].astype(object)
-        df[ml_rep_field] = fps
+    elif ml_rep_field == 'adsorbate_morgan_fp_bitvect':
+        fps=[]
         
-        return df
+                    
+    df[ml_rep_field] = [[]] * df.shape[0]
+    df[ml_rep_field] = df[ml_rep_field].astype(object)
+    df[ml_rep_field] = fps
+    
+    return df
 
 def ML_model(dframe, prop_name, kernel_parameters, ml_rep_field='morgan_fp_bitvect', multiprocess=1,  D_scratch_dir='scratch_distance_matrix'):
     # Preprocessing
