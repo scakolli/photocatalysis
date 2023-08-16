@@ -8,23 +8,24 @@ import torch.optim as optim
 
 from photocatalysis.deeplearning.helpers import one_hot_to_smile
 
-print(f'CUDA GPU Available: {torch.cuda.is_available()}')
-
 class VAE(nn.Module):
-    def __init__(self, INPUT_SIZE=120, CHARSET_LEN=33, LATENT_DIM=292, kernel_sizes=(9,9,11)):
+    def __init__(self, INPUT_SIZE=120, CHARSET_LEN=33, LATENT_DIM=292, filter_sizes=(9,9,10), kernel_sizes=(9,9,11)):
         super(VAE, self).__init__()
         self.INPUT_SIZE = INPUT_SIZE
         self.CHARSET_LEN = CHARSET_LEN
         self.LATENT_DIM = LATENT_DIM
+        self.FS1, self.FS2, self.FS3 = filter_sizes
+        self.KS1, self.KS2, self.KS3 = kernel_sizes
 
         ### ENCODING
         # Convolutional Layers
-        self.conv_1 = nn.Conv1d(self.INPUT_SIZE, 9, kernel_size=9)
-        self.conv_2 = nn.Conv1d(9, 9, kernel_size=9)
-        self.conv_3 = nn.Conv1d(9, 10, kernel_size=11)
+        self.conv_1 = nn.Conv1d(self.INPUT_SIZE, self.FS1, kernel_size=self.KS1)
+        self.conv_2 = nn.Conv1d(self.FS1, self.FS2, kernel_size=self.KS2)
+        self.conv_3 = nn.Conv1d(self.FS2, self.FS3, kernel_size=self.KS3)
 
         # Fully Connected Layer
-        self.linear_0 = nn.Linear(70, 435)
+        self.inp_s = self.FS3 * (self.CHARSET_LEN - self.KS1 - self.KS2 - self.KS3 + 3) # conv3.shape[1] * conv3.shape[2]
+        self.linear_0 = nn.Linear(self.inp_s, 435)
 
         # Mean and Variance Latent Layers
         self.mean_linear_1 = nn.Linear(435, self.LATENT_DIM)
@@ -44,13 +45,9 @@ class VAE(nn.Module):
 
     def encode(self, x):
         # Convolutional
-        print(x.shape)
         x = self.relu(self.conv_1(x))
-        print(x.shape)
         x = self.relu(self.conv_2(x))
-        print(x.shape)
         x = self.relu(self.conv_3(x))
-        print(x.shape)
 
         # Flatten the Convultional output [batch_size, 10, 70] to make an input [batch_size, 10*7] for a fully connected layer
         x = x.view(x.size(0), -1)
@@ -140,8 +137,8 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
     for batch_indx, X in enumerate(tqdm(training_data_loader)):
         # Reset gradients after each batch and send data to GPU if availables
         OPTIMIZER.zero_grad()
-        X = X[0].to(device)
-
+        # X = X[0].to(device) # if using torch.utils.data.TensorDataset()
+        X = X.to(device)
         # Forward pass through the model
         Xhat, mu_z, logvar_z = MODEL(X)
 

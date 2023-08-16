@@ -39,7 +39,7 @@ def smiles_to_onehot(smiles_list, character_list, pad_length):
         
         oh_tensor.append(smi_oh)
 
-    return np.array(oh_tensor)
+    return np.array(oh_tensor).astype(np.float32)
 
 def one_hot_to_smile(onehot_vector, character_set):
     ### Take a one-hot vector/tensor (MAX SMILE LENGTH, CHARSET LENGTH) and convert it to a smile string
