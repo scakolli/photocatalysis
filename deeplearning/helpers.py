@@ -1,6 +1,6 @@
 import numpy as np
 
-def get_charset(smiles_list):
+def get_charset(smiles_list, sos_token=None):
     char_list = list()
     max_smi_len = 0
 
@@ -16,8 +16,9 @@ def get_charset(smiles_list):
             if c not in char_list:
                 char_list.append(c)
 
-    # Append 'space' padding character
-    char_list.append(' ')
+    # Prepending 'space' padding character and SOS token if provided
+    if sos_token is not None: char_list.insert(0, 'X')
+    char_list.insert(0, ' ')
 
     return np.array(char_list), max_smi_len
 

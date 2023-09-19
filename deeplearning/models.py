@@ -8,14 +8,119 @@ import torch.optim as optim
 
 from photocatalysis.deeplearning.helpers import one_hot_to_smile
 
+class advGRUCell(nn.GRUCell):
+    def __init__(self, input_size, hidden_size, activation=F.tanh, inner_activation=F.sigmoid):
+        super(advGRUCell, self).__init__(input_size, hidden_size, bias=True)
+        self.activation = activation
+        self.inner_activation = inner_activation
+
+    def forward(self, input, hx=None):
+        if hx is None:
+            hx = torch.autograd.Variable(input.data.new(
+                input.size(0),
+                self.hidden_size).zero_(), requires_grad=False)
+        gi = F.linear(input, self.weight_ih, self.bias_ih)
+        gh = F.linear(hx, self.weight_hh, self.bias_hh)
+
+        i_r, i_z, i_n = gi.chunk(3, 1)
+        h_r, h_z, h_n = gh.chunk(3, 1)
+
+        resetgate = self.inner_activation(i_r + h_r)
+        inputgate = self.inner_activation(i_z + h_z)
+        preactivation = i_n + resetgate * h_n
+        newgate = self.activation(preactivation)
+        hy = newgate + inputgate * (hx - newgate)
+
+        return hy, preactivation
+
+class teacherGRU(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size,
+                 gru_activation=F.tanh, gru_inner_activation=F.sigmoid,
+                 gotoken=None, state_dict=None, probabilistic_sampling=True):
+        
+        if gotoken is None:
+            raise ValueError("Need to provide a gotoken when using teachers forcing")
+        
+        super(teacherGRU, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.gotoken = gotoken
+        
+        self.cell = advGRUCell(input_size=input_size + output_size, hidden_size=hidden_size, 
+                               activation=gru_activation, inner_activation=gru_inner_activation)
+
+        self.linear = nn.Linear(hidden_size, output_size)
+
+        if state_dict is not None:
+            self.cell.load_state_dict(state_dict[0])
+            self.linear.load_state_dict(state_dict[1])
+
+        if probabilistic_sampling:
+            self.sample = torch.multinomial
+        else:
+            def topi(matrix, top):
+                return torch.topk(matrix, top)[1]
+            self.sample = topi
+
+    def forward(self, y, groundTruth=None, hx=None):
+        batch_size = y.size(0)
+        seq_length = y.size(1)
+
+        output = []
+        sampled_output = []
+        preactivation = []
+
+        target = self.gotoken.repeat(batch_size, 1)
+
+        if hx is None:
+            hx = y.data.new(batch_size, self.hidden_size).zero_()
+
+        for i in range(seq_length):
+            input_ = torch.cat([y[:, i, :], target], dim=-1)
+            hx, pre = self.cell(input_, hx=hx)
+            output_ = F.log_softmax(self.linear(hx), dim=1)
+            
+            # Sampling
+            probs = torch.exp(output_)
+            indices = self.sample(probs, 1)
+            one_hot = output_.data.new(output_.size(0), self.output_size).zero_() # originally was self.hidden_size, although i think this is a mistake
+            one_hot.scatter_(1, indices, 1)
+
+            # Construct output lists
+            output.append(probs.view(batch_size, 1, self.output_size))
+            preactivation.append(pre.view(batch_size, 1, self.hidden_size))
+            sampled_output.append(one_hot)
+
+            if groundTruth is not None:
+                # Teacher force actual ground-truth
+                target = groundTruth[:, i, :]
+            else:
+                # Feed in own prediction
+                target = one_hot
+        
+        output = torch.cat(output, 1) # log probabilites
+        preactivation = torch.cat(preactivation, 1)
+        sampled_output = torch.stack(sampled_output, 1)
+        
+        # output probabilities instead of log probs
+        return output, preactivation, sampled_output, hx
+
 class VAE(nn.Module):
-    def __init__(self, INPUT_SIZE=120, CHARSET_LEN=33, LATENT_DIM=292, filter_sizes=(9,9,10), kernel_sizes=(9,9,11)):
+    def __init__(self, INPUT_SIZE=120, CHARSET_LEN=33, LATENT_DIM=292, HIDDEN_SIZE=501,
+                filter_sizes=(9,9,10), kernel_sizes=(9,9,11), eps_std=1., useTeacher=True, gotoken=None, probabilistic_sampling=True):
+        if useTeacher and gotoken is None:
+            raise ValueError("Need to provide a gotoken when using teachers forcing")
+        
         super(VAE, self).__init__()
         self.INPUT_SIZE = INPUT_SIZE
         self.CHARSET_LEN = CHARSET_LEN
         self.LATENT_DIM = LATENT_DIM
+        self.HIDDEN_SIZE = HIDDEN_SIZE
         self.FS1, self.FS2, self.FS3 = filter_sizes
         self.KS1, self.KS2, self.KS3 = kernel_sizes
+        self.eps_std = eps_std
+        self.generation_mode = False
 
         ### ENCODING
         # Convolutional Layers
@@ -35,13 +140,27 @@ class VAE(nn.Module):
         # Fully connected, GRU RNN, Fully connected layers
         # 3 sequential GRUs of hidden size 501. batch_first = True implies batch_dim first. 
         # Then, inputs into GRU are of shape [batch_size, seq_length (INPUT_SIZE, 120), Hin (LATENT_DIM, 292)]
+        
+        # Embedding latent vector
         self.linear_3 = nn.Linear(self.LATENT_DIM, self.LATENT_DIM)
-        self.stacked_gru = nn.GRU(self.LATENT_DIM, 501, 3, batch_first=True)
-        self.linear_4 = nn.Linear(501, self.CHARSET_LEN)
+
+        # Pass to GRU
+        self.stacked_gru = nn.GRU(self.LATENT_DIM, self.HIDDEN_SIZE, 3, batch_first=True)
+
+        # Terminal GRU
+        if useTeacher:
+            self.terminalGRU = teacherGRU(self.HIDDEN_SIZE, self.HIDDEN_SIZE, self.CHARSET_LEN,
+                                          gotoken=gotoken, probabilistic_sampling=probabilistic_sampling)
+        else:
+            raise ValueError("Need to implement no teacher terminal GRU")
+            # self.terminalGRU = nn.GRU(self.HIDDEN_SIZE, self.HIDDEN_SIZE, 1, batch_first=True)[0]
+
+        # Project GRU output to CHARSET_LEN
+        # self.linear_4 = nn.Linear(501, self.CHARSET_LEN)
         
         ### ACTIVATION and OUTPUT 
         self.relu = nn.ReLU()
-        self.softmax = nn.Softmax()
+        # self.softmax = nn.Softmax()
 
     def encode(self, x):
         # Convolutional
@@ -54,20 +173,30 @@ class VAE(nn.Module):
         x = F.selu(self.linear_0(x))
 
         # Mean and logvariance latent vectors [batch_size, latent_dim]
-        m, v = self.mean_linear_1(x), self.var_linear_2(x) 
-        return m, v
+        m, logv = self.mean_linear_1(x), self.var_linear_2(x) 
+        return m, logv
 
     def reparameterize(self, mu_z, logvar_z):
         ## Sample a latent vector 'z', given its mean and std vectors
         # z ~ N(mu, std), is non-differentiable. While z ~ mu + eps (dot) std, where eps ~ N(0, 1), is differentiable. Why?
         # Since mu and std are now deterministic model outputs that can be trained by backprop, while the 'randomness' implicitly enters via the standard normal error/epsilon term
-        gamma = 1e-2 # not sure why this is here...?
-        epsilon = gamma * torch.randn_like(logvar_z) # 0 mean, unit variance noise of shape z_logvar
+        epsilon = self.eps_std * torch.randn_like(logvar_z) # 0 mean, unit variance noise of shape z_logvar
         std = torch.exp(0.5 * logvar_z)
         z = mu_z + epsilon * std
         return z
+    
+    def decode(self, z, hx=None, groundTruth=None):
+        # Fully connected layer to GRU
+        z_emb = F.selu(self.linear_3(z))
+        z_emb = z_emb.view(z_emb.size(0), 1, z_emb.size(-1)).repeat(1, self.INPUT_SIZE, 1)
 
-    def decode(self, z):
+        # Stacked + teacher-forcing GRU
+        output, hs = self.stacked_gru(z_emb)
+        logits, _, sampled_output, _ = self.terminalGRU(output, hx=hx, groundTruth=groundTruth)
+
+        return logits, sampled_output
+
+    def decode_old(self, z):
         z = F.selu(self.linear_3(z))
 
         # Since the GRU, when unrolled in 'time', consists of 120 NNs each sequentially processing data... we have to send 120 copies through it.
@@ -105,29 +234,52 @@ class VAE(nn.Module):
         # independently (as if the new batch size is of shape batch_size * seq_len)! This is independent in the sense that the transformation doesn't consider interactions
         # between different time steps or different samples within the batch. It's a per-element operation.
 
-        # By applying a linear transformation independently to each element, the model has the flexibility to learn different weights for different features at different time steps.
-        # These weights can capture complex relationships within each time step's output, such as identifying important features or capturing patterns specific to that moment.
-        # We then reshape back to regain the sequence structure...
+        # Project GRU output back into the charset space (501 -> 21)
+        # Either done by flatten t
         out_independent = output.contiguous().view(-1, output.size(-1))
-        y0 = F.softmax(self.linear_4(out_independent), dim=1)
+        logits = self.linear_4(out_independent)
+        y0 = F.softmax(logits, dim=1)
         y = y0.contiguous().view(output.size(0), -1, y0.size(-1))
         return y
 
     def forward(self, x):
         mu_z, logvar_z = self.encode(x)
         z = self.reparameterize(mu_z, logvar_z)
-        xhat = self.decode(z)
-        return xhat, mu_z, logvar_z
+        # xhat = self.decode(z)
+        
+        # Teacher-forcing when training, else use model sequence predictions
+        ground_truth = x if not self.generation_mode else None
+        xhat, samples = self.decode(z, groundTruth=ground_truth)
+        return xhat, samples, mu_z, logvar_z
     
+def cyclical_annealing(step, T, M, R=0.5, max_kl_weight=1):
+    """
+    Implementing: <https://arxiv.org/abs/1903.10145>
+    T = Total steps or training epochs
+    M = Number of cycles 
+    R = Proportion used to increase beta
+    step = Global step 
+    """
+    period = T / M # N_iters/N_cycles 
+    internal_period = step % period  # Itteration_number/(Global Period)
+    beta = internal_period / period
+    if beta > R:
+        beta = max_kl_weight
+    else:
+        beta = min(max_kl_weight, beta / R) # Linear function 
+    return beta
 
-def variational_loss(x, reconstructed_x_mean, mu_z, logvar_z):
-    # VAE reconstruction + KL-div loss
+def linear_annealing(step, T, R=0.8, max_kl_weight=1.):
+    return min(max_kl_weight, step / int(T * R))
+    
+def variational_loss(x, reconstructed_x_mean, mu_z, logvar_z, beta=1.):
+    # VAE ELBO, reconstruction + KL-div loss
     BCE = F.binary_cross_entropy(reconstructed_x_mean, x, reduction='sum') # Pixel-wise reconstruction loss, no-mean taken to match KL-div
     KLD = -0.5 * torch.sum(1. + logvar_z - mu_z.pow(2) - logvar_z.exp()) # KL divergence of the latent space distribution
+    ELBO = BCE + beta * KLD
+    return ELBO, BCE, KLD
 
-    return BCE + KLD, BCE, KLD
-
-def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=None, epoch=0, device='cpu', charset=None):
+def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=None, epoch=0, device='cpu', charset=None, kl_weight=1.):
     print(f'################ epoch {epoch} ################')
     print('TRAINING')
     start = time.perf_counter()
@@ -140,10 +292,10 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
         # X = X[0].to(device) # if using torch.utils.data.TensorDataset()
         X = X.to(device)
         # Forward pass through the model
-        Xhat, mu_z, logvar_z = MODEL(X)
+        Xhat, samples, mu_z, logvar_z = MODEL(X)
 
         # Determine Loss, perform backward pass, and update weights
-        loss, bceloss, kldloss = variational_loss(X, Xhat, mu_z, logvar_z)
+        loss, bceloss, kldloss = variational_loss(X, Xhat, mu_z, logvar_z, beta=kl_weight)
         loss.backward()
         OPTIMIZER.step()
 
@@ -163,7 +315,7 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
         print('VALIDATING')
         for _, X_valid in enumerate(tqdm(validation_data_loader)):
             X_valid = X_valid.to(device)
-            Xhat_valid, mu_valid, logvar_valid = MODEL(X_valid)
+            Xhat_valid, samples_valid, mu_valid, logvar_valid = MODEL(X_valid)
             validation_loss_batch, _, _ = variational_loss(X_valid, Xhat_valid, mu_valid, logvar_valid)
             validation_loss += validation_loss_batch.item()
 
