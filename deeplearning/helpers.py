@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 def get_charset(smiles_list, sos_token=None):
     char_list = list()
@@ -48,3 +50,34 @@ def one_hot_to_smile(onehot_vector, character_set):
     indicies = np.argmax(onehot_vector, axis=1)
     # return b''.join(character_set[indicies])
     return ''.join(character_set[indicies])
+
+def plot_model_performance(tls, vls, name=None):
+    trainlosses = pd.DataFrame(tls, columns=['train', 'bce', 'kld', 'prop'])
+    validlosses = pd.DataFrame(vls, columns=['valid', 'bce', 'kld', 'prop'])
+
+    trainlosses['elbo'] = trainlosses.bce + trainlosses.kld
+    validlosses['elbo'] = validlosses.bce + validlosses.kld
+    trainlosses['kld_elbo_ratio'] = 100 * trainlosses.kld / trainlosses.elbo # What % of the ELBO loss does KLD make up
+
+    fig, ax = plt.subplots(1, 4, figsize=(12, 5))
+    trainlosses.train[1:].plot(label='train', color='red', ax=ax[0])
+    validlosses.valid[1:].plot(label='valid', color='blue', ax=ax[0])
+    ax[0].set_title('TOTAL')
+    ax[0].legend()
+
+    trainlosses.elbo[1:].plot(label='train', color='red', ax=ax[1])
+    validlosses.elbo[1:].plot(label='valid', color='blue', ax=ax[1])
+    ax[1].set_title('ELBO')
+    ax[1].legend()
+
+    trainlosses.kld_elbo_ratio[1:].plot(label='KLD Fraction of ELBO', color='green', ax=ax[2])
+    ax[2].set_title('KLD / ELBO')
+
+    trainlosses.prop[1:].plot(label='train', color='red', ax=ax[3])
+    validlosses.prop[1:].plot(label='valid', color='blue', ax=ax[3])
+    ax[3].set_title('PROP')
+    ax[3].legend()
+
+    plt.suptitle(name)
+
+    return trainlosses, validlosses

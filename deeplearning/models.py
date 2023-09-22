@@ -105,10 +105,37 @@ class teacherGRU(nn.Module):
         
         # output probabilities instead of log probs
         return output, preactivation, sampled_output, hx
+    
+class propertyPredictor(nn.Module):
+    def __init__(self, latent_input_dim=292, hidden_size=1000, hidden_depth=1, inner_activation=nn.Tanh()):
+        super(propertyPredictor, self).__init__()
+        self.hidden_depth = hidden_depth
+
+        self.linear_in = nn.Linear(latent_input_dim, hidden_size)
+        self.linear_mid_i = nn.Linear(hidden_size, hidden_size)
+        self.linear_out = nn.Linear(hidden_size, 1)
+        self.inner_activation = inner_activation
+
+        self.mid_module_list = nn.ModuleList()
+        for _ in range(hidden_depth):
+            # Linear fully connected layer followed by activation (nn.Tanh() or nn.SELU() for example)
+            self.mid_module_list.extend([self.linear_mid_i, self.inner_activation])
+
+        self.linear_mid = nn.Sequential(*self.mid_module_list)
+
+    def forward(self, z):
+        embedded_z = self.inner_activation(self.linear_in(z)) # Explicitly include activation
+        hidden_z = self.linear_mid(embedded_z)
+        yhat = self.linear_out(hidden_z)
+
+        return yhat
 
 class VAE(nn.Module):
     def __init__(self, INPUT_SIZE=120, CHARSET_LEN=33, LATENT_DIM=292, HIDDEN_SIZE=501,
-                filter_sizes=(9,9,10), kernel_sizes=(9,9,11), eps_std=1., useTeacher=True, gotoken=None, probabilistic_sampling=True):
+                filter_sizes=(9,9,10), kernel_sizes=(9,9,11), eps_std=1.,
+                useTeacher=True,gotoken=None, probabilistic_sampling=True,
+                property_prediction_params_dict=None):
+        
         if useTeacher and gotoken is None:
             raise ValueError("Need to provide a gotoken when using teachers forcing")
         
@@ -121,6 +148,14 @@ class VAE(nn.Module):
         self.KS1, self.KS2, self.KS3 = kernel_sizes
         self.eps_std = eps_std
         self.generation_mode = False
+
+        ### PROP PREDICTION
+        if property_prediction_params_dict is not None:
+            self.property_predictor = propertyPredictor(latent_input_dim=self.LATENT_DIM, **property_prediction_params_dict)
+        else:
+            def retNone(*args):
+                return None
+            self.property_predictor = retNone
 
         ### ENCODING
         # Convolutional Layers
@@ -243,14 +278,18 @@ class VAE(nn.Module):
         return y
 
     def forward(self, x):
+        # Encode
         mu_z, logvar_z = self.encode(x)
         z = self.reparameterize(mu_z, logvar_z)
         # xhat = self.decode(z)
+
+        # Property Prediction if param dict present, else None
+        yhat = self.property_predictor(z)
         
-        # Teacher-forcing when training, else use model sequence predictions
+        # Decode with Teacher-forcing when training, else use model sequence predictions
         ground_truth = x if not self.generation_mode else None
         xhat, samples = self.decode(z, groundTruth=ground_truth)
-        return xhat, samples, mu_z, logvar_z
+        return (xhat, samples, mu_z, logvar_z), yhat
     
 def cyclical_annealing(step, T, M, R=0.5, max_kl_weight=1):
     """
@@ -279,29 +318,45 @@ def variational_loss(x, reconstructed_x_mean, mu_z, logvar_z, beta=1.):
     ELBO = BCE + beta * KLD
     return ELBO, BCE, KLD
 
-def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=None, epoch=0, device='cpu', charset=None, kl_weight=1.):
+def property_loss(ytrue, yhat):
+    return F.mse_loss(ytrue, yhat, reduction='sum')
+
+def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=None, epoch=0, device='cpu', charset=None, kl_weight=1., prop_loss_weight=1.):
     print(f'################ epoch {epoch} ################')
     print('TRAINING')
     start = time.perf_counter()
     MODEL.train() # Tell model we're in train mode, as opposed to eval mode
-    training_loss, training_bce_loss, training_kld_loss, validation_loss = 0, 0, 0, 0
+    training_loss, training_bce_loss, training_kld_loss, training_prop_loss = 0., 0., 0., 0.
+    validation_loss, validation_bce_loss, validation_kld_loss, validation_prop_loss = 0., 0., 0., 0.
 
-    for batch_indx, X in enumerate(tqdm(training_data_loader)):
+    for batch_indx, (X, y) in enumerate(tqdm(training_data_loader)):
         # Reset gradients after each batch and send data to GPU if availables
         OPTIMIZER.zero_grad()
+
         # X = X[0].to(device) # if using torch.utils.data.TensorDataset()
         X = X.to(device)
+        y = y.to(device)
+
         # Forward pass through the model
-        Xhat, samples, mu_z, logvar_z = MODEL(X)
+        (Xhat, samples, mu_z, logvar_z), yhat = MODEL(X)
 
         # Determine Loss, perform backward pass, and update weights
-        loss, bceloss, kldloss = variational_loss(X, Xhat, mu_z, logvar_z, beta=kl_weight)
+        vloss, bceloss, kldloss = variational_loss(X, Xhat, mu_z, logvar_z, beta=kl_weight)
+
+        if yhat is not None:
+            proploss = property_loss(y, yhat)
+        else:
+            proploss = 0.
+
+        loss = vloss + proploss
+
         loss.backward()
         OPTIMIZER.step()
 
         training_loss += loss.item()
         training_bce_loss += bceloss.item()
         training_kld_loss += kldloss.item()
+        training_prop_loss += proploss.item()
 
     # Free up some memory on the GPU
     # del X
@@ -313,35 +368,61 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
         # Get model performance on validation set
         # Batch is too large to be stored on the GPU... need to break it up
         print('VALIDATING')
-        for _, X_valid in enumerate(tqdm(validation_data_loader)):
+        for _, (X_valid, y_valid) in enumerate(tqdm(validation_data_loader)):
             X_valid = X_valid.to(device)
-            Xhat_valid, samples_valid, mu_valid, logvar_valid = MODEL(X_valid)
-            validation_loss_batch, _, _ = variational_loss(X_valid, Xhat_valid, mu_valid, logvar_valid)
-            validation_loss += validation_loss_batch.item()
+            y_valid = y_valid.to(device)
+
+            (Xhat_valid, samples_valid, mu_valid, logvar_valid), yhat_valid = MODEL(X_valid)
+            vloss, bceloss, kldloss = variational_loss(X_valid, Xhat_valid, mu_valid, logvar_valid)
+
+            if yhat is not None:
+                proploss = property_loss(y_valid, yhat_valid)
+            else:
+                proploss = 0.
+
+            loss = vloss + proploss
+
+            validation_loss += loss.item()
+            validation_bce_loss += bceloss.item()
+            validation_kld_loss += kldloss.item()
+            validation_prop_loss += proploss.item()
 
         # X_valid = data_valid_tensor.to(device)
         # Xhat_valid, mu_valid, logvar_valid = model(X_valid)
         # validation_loss, _, _ = variational_loss(X_valid, Xhat_valid, mu_valid, logvar_valid)
 
-        mean_validation_loss = validation_loss / len(validation_data_loader.dataset)
+        N = len(validation_data_loader.dataset)
+        mean_validation_loss = validation_loss / N
+        mean_validation_bce_loss = validation_bce_loss / N
+        mean_validation_kld_loss = validation_kld_loss / N
+        mean_validation_prop_loss = validation_prop_loss / N
     else:
-        mean_validation_loss = None
+        mean_validation_loss, mean_validation_prop_loss, mean_validation_bce_loss, mean_validation_kld_loss = None, None, None, None
 
     # Summary of training epoch
     N = len(training_data_loader.dataset)
     mean_training_loss = training_loss / N
     mean_training_bce_loss = training_bce_loss / N
     mean_training_kld_loss = training_kld_loss / N
+    mean_training_prop_loss = training_prop_loss / N
+
+    all_train_losses = (mean_training_loss, mean_training_bce_loss, mean_training_kld_loss, mean_training_prop_loss)
+    all_valid_losses = (mean_validation_loss, mean_validation_bce_loss, mean_validation_kld_loss, mean_validation_prop_loss)
 
     test_points = X[0].cpu(), Xhat[0].cpu().detach() # Access a datapoint, send to cpu, and remove gradient
     test_smiles = [one_hot_to_smile(t.numpy(), charset) for t in test_points]
 
-    print('SUMARRY')
+    print('EPOCH SUMARRY')
     print(f'Epoch took: {(time.perf_counter() - start) / 60.} mins')
+    print('Mean Training BCE Loss:', mean_training_bce_loss)
+    print('Mean Training KLD Loss:', mean_training_kld_loss)
+    print('Mean Training Prop Loss:', mean_training_prop_loss)
+    print('Mean Training ELBO Loss:', mean_training_bce_loss + mean_training_kld_loss)
+    print('---------------------')
     print('Mean Training Loss:', mean_training_loss)
     print('Mean Validation Loss:', mean_validation_loss)
     print('---------------------')
     print('Random Sampled Input, Ouput Smiles:')
     for t in test_smiles: print(t)
 
-    return (mean_training_loss, mean_training_bce_loss, mean_training_kld_loss), mean_validation_loss
+    return all_train_losses, all_valid_losses
