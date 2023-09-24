@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from rdkit import Chem
+
 def get_charset(smiles_list, sos_token=None):
     char_list = list()
     max_smi_len = 0
@@ -81,3 +83,46 @@ def plot_model_performance(tls, vls, name=None):
     plt.suptitle(name)
 
     return trainlosses, validlosses
+
+def balanced_parentheses(smile):
+    # Parentheses should be balance in the smile string
+    s = []
+    balanced = True
+    index = 0
+    while index < len(smile) and balanced:
+        token = smile[index]
+        if token == "(":
+            s.append(token)
+        elif token == ")":
+            if len(s) == 0:
+                balanced = False
+            else:
+                s.pop()
+
+        index += 1
+
+    return balanced and len(s) == 0
+
+def matched_ring(smile):
+    # Should be an even number of numbers, indicating proper ring closure
+    return smile.count('1') % 2 == 0 and smile.count('2') % 2 == 0
+
+def full_verify_smile(smile):
+    return (smile != '') and pd.notnull(smile) and (Chem.MolFromSmiles(smile) is not None)
+
+def fast_verify_smile(smile):
+    return matched_ring(smile) and balanced_parentheses(smile)
+
+def verify_smile(smile):
+    # If initial fast verify passes, do thorough verify with rdkit, else return
+    # False immediately
+    if fast_verify_smile(smile):
+        return full_verify_smile(smile)
+    else:
+        return False
+
+def repeatative_verify_smile(smile, repeat_thresh=8):
+    # Verify and filter out smiles with an excessive number of repeating non-carbon atoms
+    nonC = ['O', 'S', 'N', 'o', 'n', 's']
+    condition = [smile.count(atom) < repeat_thresh for atom in nonC]
+    return all(condition)
