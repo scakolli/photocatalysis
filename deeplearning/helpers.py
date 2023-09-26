@@ -3,8 +3,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from rdkit import Chem
+import selfies as sf
 
-def get_charset(smiles_list, sos_token=None):
+def get_charset(smiles_list, sos_token=None, eos_token=' '):
     char_list = list()
     max_smi_len = 0
 
@@ -22,7 +23,7 @@ def get_charset(smiles_list, sos_token=None):
 
     # Prepending 'space' padding character and SOS token if provided
     if sos_token is not None: char_list.insert(0, 'X')
-    char_list.insert(0, ' ')
+    char_list.insert(0, eos_token)
 
     return np.array(char_list), max_smi_len
 
@@ -47,7 +48,7 @@ def smiles_to_onehot(smiles_list, character_list, pad_length):
     return np.array(oh_tensor).astype(np.float32)
 
 def one_hot_to_smile(onehot_vector, character_set):
-    ### Take a one-hot vector/tensor (MAX SMILE LENGTH, CHARSET LENGTH) and convert it to a smile string
+    ### Take a one-hot vector/tensor (MAX SMILE LENGTH, CHARSET LENGTH) and convert it to a smile string (or selfie string)
     assert onehot_vector.shape[1] == character_set.size, 'Onehot length doesnt match character_set length'
     indicies = np.argmax(onehot_vector, axis=1)
     # return b''.join(character_set[indicies])
@@ -126,3 +127,39 @@ def repeatative_verify_smile(smile, repeat_thresh=8):
     nonC = ['O', 'S', 'N', 'o', 'n', 's']
     condition = [smile.count(atom) < repeat_thresh for atom in nonC]
     return all(condition)
+
+def get_charset_selfies(selfies, sos_token=None, eos_token="[nop]"):
+    
+    max_selfie_len = max(sf.len_selfies(s) for s in selfies)
+    alphabet = sf.get_alphabet_from_selfies(selfies)
+    alphabet = list(sorted(alphabet))
+    
+    if sos_token is not None: alphabet.insert(0, sos_token)
+    alphabet.insert(0, eos_token)  # [nop] no-operation special padding symbol
+
+    # SOS-token is always in the 2nd pos; construct gotoken for TeacherForcing accordingly
+
+    return np.array(alphabet), max_selfie_len
+
+def selfies_to_onehot(selfies, alphabet, max_selfie_len=None):
+
+   if max_selfie_len is not None:
+      # Use user inputed sequence length
+      pad_to_len = max_selfie_len
+   else:
+      # Use max sequence length encountered in selfies
+      pad_to_len = max(sf.len_selfies(s) for s in selfies)
+
+   symbol_to_idx = {s: i for i, s in enumerate(alphabet)}
+
+   one_hot_tensor = []
+   for s in selfies:
+      _, one_hot = sf.selfies_to_encoding(
+         selfies=s,
+         vocab_stoi=symbol_to_idx,
+         pad_to_len=pad_to_len,
+         enc_type="both")
+
+      one_hot_tensor.append(one_hot)
+
+   return np.array(one_hot_tensor).astype(np.float32)

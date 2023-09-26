@@ -321,7 +321,7 @@ def variational_loss(x, reconstructed_x_mean, mu_z, logvar_z, beta=1.):
 def property_loss(ytrue, yhat):
     return F.mse_loss(ytrue, yhat, reduction='sum')
 
-def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=None, epoch=0, device='cpu', charset=None, kl_weight=1., prop_loss_weight=1.):
+def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=None, epoch=0, device='cpu', charset=None, kl_weight=1., prop_loss_weight=1., eos_token=' '):
     print(f'################ epoch {epoch} ################')
     print('TRAINING')
     start = time.perf_counter()
@@ -410,7 +410,7 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
     all_valid_losses = (mean_validation_loss, mean_validation_bce_loss, mean_validation_kld_loss, mean_validation_prop_loss)
 
     test_points = X[0].cpu(), Xhat[0].cpu().detach() # Access a datapoint, send to cpu, and remove gradient
-    test_smiles = [one_hot_to_smile(t.numpy(), charset) for t in test_points]
+    test_smiles = [one_hot_to_smile(t.numpy(), charset).replace(eos_token, '') for t in test_points]
 
     print('EPOCH SUMARRY')
     print(f'Epoch took: {(time.perf_counter() - start) / 60.} mins')
