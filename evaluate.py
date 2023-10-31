@@ -10,7 +10,7 @@ from photocatalysis.thermodynamics.thermodynamics import get_thermodynamics, mul
 
 from photocatalysis.thermodynamics.helpers import get_logger
 
-def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
+def evaluate_substrate(smile_string, calculator_params, scratch_dir=None, relax_mp=-1):
     if scratch_dir is not None:
         base = os.getcwd()
         os.chdir(scratch_dir)
@@ -27,7 +27,7 @@ def evaluate_substrate(smile_string, calculator_params, scratch_dir=None):
     ### Relax and filter
     # Crude relaxation is sufficient
     eval_logger.info('Building and relaxing configurations')
-    oh_configs, o_configs, ooh_configs = build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=-1)
+    oh_configs, o_configs, ooh_configs = build_and_relax_configurations(substrate, sites, optlevel='loose', multi_process=relax_mp)
 
     ### Rate determining free energy and other quantities
     eval_logger.info('Calculating thermochemical properties')

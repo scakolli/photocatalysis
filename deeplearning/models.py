@@ -130,6 +130,21 @@ class propertyPredictor(nn.Module):
 
         return yhat
 
+class noTeachernoGRU(nn.Module):
+    def __init__(self, hidden_size, output_size):
+        # NO GRU implemented.... just the old terminal layer and softmax
+        super(noTeachernoGRU, self).__init__()
+        
+        self.linear = nn.Linear(hidden_size, output_size)
+
+    def forward(self, output, hx=None, groundTruth=None):
+        out_independent = output.contiguous().view(-1, output.size(-1))
+        logits = self.linear(out_independent)
+        y0 = F.softmax(logits, dim=1)
+        xhat = y0.contiguous().view(output.size(0), -1, y0.size(-1))
+
+        return xhat, None, None, None
+
 class VAE(nn.Module):
     def __init__(self, INPUT_SIZE=120, CHARSET_LEN=33, LATENT_DIM=292, HIDDEN_SIZE=501,
                 filter_sizes=(9,9,10), kernel_sizes=(9,9,11), eps_std=1.,
@@ -187,8 +202,7 @@ class VAE(nn.Module):
             self.terminalGRU = teacherGRU(self.HIDDEN_SIZE, self.HIDDEN_SIZE, self.CHARSET_LEN,
                                           gotoken=gotoken, probabilistic_sampling=probabilistic_sampling)
         else:
-            raise ValueError("Need to implement no teacher terminal GRU")
-            # self.terminalGRU = nn.GRU(self.HIDDEN_SIZE, self.HIDDEN_SIZE, 1, batch_first=True)[0]
+            self.terminalGRU = noTeachernoGRU(self.HIDDEN_SIZE, self.CHARSET_LEN)
 
         # Project GRU output to CHARSET_LEN
         # self.linear_4 = nn.Linear(501, self.CHARSET_LEN)
@@ -346,7 +360,7 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
         if yhat is not None:
             proploss = property_loss(y, yhat)
         else:
-            proploss = 0.
+            proploss = torch.tensor(0.)
 
         loss = vloss + proploss
 
@@ -378,7 +392,7 @@ def train_epoch(training_data_loader, MODEL, OPTIMIZER, validation_data_loader=N
             if yhat is not None:
                 proploss = property_loss(y_valid, yhat_valid)
             else:
-                proploss = 0.
+                proploss = torch.tensor(0.)
 
             loss = vloss + proploss
 

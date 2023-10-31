@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 from rdkit import Chem
 import selfies as sf
 
+import torch
+from tqdm import tqdm
+
 def get_charset(smiles_list, sos_token=None, eos_token=' '):
     char_list = list()
     max_smi_len = 0
@@ -85,6 +88,8 @@ def plot_model_performance(tls, vls, name=None):
 
     return trainlosses, validlosses
 
+####### Verifying Molecules ##################
+
 def balanced_parentheses(smile):
     # Parentheses should be balance in the smile string
     s = []
@@ -128,6 +133,8 @@ def repeatative_verify_smile(smile, repeat_thresh=8):
     condition = [smile.count(atom) < repeat_thresh for atom in nonC]
     return all(condition)
 
+######### SELFIES ############
+
 def get_charset_selfies(selfies, sos_token=None, eos_token="[nop]"):
     
     max_selfie_len = max(sf.len_selfies(s) for s in selfies)
@@ -163,3 +170,155 @@ def selfies_to_onehot(selfies, alphabet, max_selfie_len=None):
       one_hot_tensor.append(one_hot)
 
    return np.array(one_hot_tensor).astype(np.float32)
+
+# def onehot_to_selfies(one_hot_tensor, alphabet):
+#     # Only works if 1's present in the tensor...wont work with raw logits
+#     idx_to_symbol = {i: s for i, s in enumerate(alphabet)}
+
+#     selfs = []
+#     for oh in one_hot_tensor:
+#         self = sf.encoding_to_selfies(oh, idx_to_symbol, enc_type="one_hot")
+#         selfs.append(self)
+
+#     return selfs
+
+###### Performancy Metrics #######
+
+def Accuracy(xhat, x):
+    # Indices of highest score characters
+    _, topi = x.topk(1)
+    _, topi_hat = xhat.topk(1)
+    # Xhat_onehot = torch.nn.functional.one_hot(topi_hat[:, :, 0]) # Xhat as a one-hot representation
+
+    ### Character-by-character accuracy
+    # Num equivalent chars / total chars
+    eqv = topi == topi_hat
+    char_acc = torch.sum(eqv) / topi.nelement()
+
+    ### Smile accuracy
+    # Num equivalent smiles / total smiles
+    smi_acc = torch.all(eqv, dim=1).sum() / eqv.shape[0]
+
+    return char_acc.item(), smi_acc.item()
+
+def logits_batch_to_one_hot_batch(Logits_Batch):
+    # Take a batch of logits (250, 80, 22) and sample a batch of onehot vectors multinomially (250, 80, 22)
+    one_hots = []
+
+    for l in Logits_Batch:
+        indx = torch.multinomial(l, 1)
+        one_hot = torch.zeros_like(l)
+        one_hot.scatter_(1, indx, 1)
+        one_hot.unsqueeze_(0)
+
+        one_hots.append(one_hot)
+
+    one_hots = torch.cat(one_hots, 0)
+
+    return one_hots
+
+def decode_logits(Logits, character_list, num_decode_attempts=100):
+    # Probabilistic multinomial sampling of softmax output logist
+    # and subsequent bare smile string decoding w/o validation
+    assert Logits.shape[1] == character_list.size, 'Logit length doesnt match character_set length'
+    decoded_smiles = []
+
+    for _ in range(num_decode_attempts):
+        indx = torch.multinomial(Logits, 1)
+        one_hot = torch.zeros_like(Logits)
+        one_hot.scatter_(1, indx, 1)
+        
+        smile = one_hot_to_smile(one_hot, character_list)
+        decoded_smiles.append(smile)
+    
+    return decoded_smiles
+
+def reconstruction_accuracy(loader, MODEL, num_encode_attempts=10, num_run_throughs=10, num_decode_attempts=10, num_mols=250, device='cpu'):
+    ca, sa = [], []
+    loader_batch_size = loader.batch_size
+
+    for batch_indx, (xx, yy) in enumerate(loader):
+        print(f'########## BATCH {batch_indx} ##########')
+        
+        with torch.no_grad():
+            xx = xx.to(device)
+            mu_z, logvar_z = MODEL.encode(xx)
+            xx = xx.cpu()
+            
+            for i in tqdm(range(num_encode_attempts)):
+                # 1. sample latent vector
+                z = MODEL.reparameterize(mu_z, logvar_z)
+
+                for j in range(num_run_throughs):
+                    # 2. sample model run through
+                    logits_batch, _ = MODEL.decode(z, groundTruth=None)
+                    logits_batch = logits_batch.cpu()
+                    
+                    for k in range(num_decode_attempts):
+                        # 3. sample multinomially a one-hot vector from logits
+                        xxhat = logits_batch_to_one_hot_batch(logits_batch)
+
+                        # Calculate Accuracy metrics of this sample
+                        char_acc, smi_acc = Accuracy(xxhat, xx)
+                        ca.append(char_acc), sa.append(smi_acc)
+                        
+        if batch_indx+1 == num_mols // loader_batch_size:
+            break
+    
+    mean_char_acc, mean_smi_acc = np.mean(ca), np.mean(sa)
+
+    trials = num_encode_attempts*num_run_throughs*num_decode_attempts
+    print('#################')
+    print(f'{trials} trials over {num_mols} molecules')
+    print(f'Mean Character-by-Character Accuracy: {mean_char_acc}')
+    print(f'Mean Smile Accuracy: {mean_smi_acc}')
+
+    return mean_char_acc, mean_smi_acc
+
+def prior_validity_accuracy(MODEL, character_set, num_z_samples=10, num_run_throughs=10, num_decode_attempts=10, eps_std=1., device='cpu', selfies=False):
+
+    # Sample latent space
+    Zs = eps_std * torch.randn(num_z_samples, MODEL.LATENT_DIM)
+    Zs = Zs.repeat(num_run_throughs, 1)
+
+    # Create dataloader so you can fit stuff on the GPU if need be
+    loader = torch.utils.data.DataLoader(Zs, batch_size=250, shuffle=True)
+
+    decoded_smiles_list = []
+
+    for z in tqdm(loader):
+        with torch.no_grad():
+            z = z.to(device)
+            logits_batch, _ = MODEL.decode(z, groundTruth=None)
+            logits_batch = logits_batch.cpu()
+
+            for l in logits_batch:
+                smiles = decode_logits(l, character_set, num_decode_attempts=num_decode_attempts)
+                decoded_smiles_list += smiles
+
+    err_cnt = 0
+    if selfies:
+        # Decode selfies to smiles first
+        success_decode = []
+        for s in decoded_smiles_list:
+            try:
+                sm_decoded = sf.decoder(s)
+                success_decode.append(sm_decoded)
+            except:
+                err_cnt += 1
+                pass
+
+        decoded_smiles_list = success_decode
+
+    valid_smiles = [s for s in decoded_smiles_list if verify_smile(s)]
+        
+    # Proprtion of valid smiles
+    trials = num_run_throughs*num_decode_attempts - err_cnt
+    prior_valid_acc = len(valid_smiles) / len(decoded_smiles_list)
+
+    print('#################')
+    print(f'{trials} trials over {num_z_samples} molecules')
+    print(f'{len(valid_smiles)} / {len(decoded_smiles_list)} valid smiles encountered')
+    print(f'Prior Valid Fraction: {prior_valid_acc}')
+
+    return prior_valid_acc
