@@ -6,11 +6,13 @@ The efficient generation of clean hydrogen via water splitting is limited by the
 ## Goal:
 To address this, my research employed a computational screening approach that integrates first-principles electronic structure calculations and machine learning (ML)-driven search strategies. Using Density Functional Theory (DFT) and semi-empirical methods, we assessed the key thermodynamic and kinetic descriptors necessary for OER activity, specifically ionization potential (IP) and adsorption free energy (GRD). We then applied an active learning (AML) framework to efficiently explore a chemical space of p-type organic semiconductors, identifying high-performing photocatalysts while significantly reducing computational cost. Additionally, we utilized a generative ML model (Variational Autoencoder, VAE) to propose novel molecular structures without predefined design constraints.
 
+
 The AML approach was inspired by Christian Kunkel's paper:
 
 "Active discovery of organic semiconductors"
 
 https://www.nature.com/articles/s41467-021-22611-4
+
 
 The Generative ML approach was inspired by Rafael Gómez-Bombarelli paper:
 
